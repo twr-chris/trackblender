@@ -60,6 +60,9 @@ export default function App() {
   const [tab, setTab] = useState("grid");
   const [saveStatus, setSaveStatus] = useState("");
 
+  // Track UIDs with pending local writes — ignore inbound sync for these
+  const pendingWrites = useRef(new Set());
+
   // Auth listener
   useEffect(() => onAuth(u => setUser(u || null)), []);
 
@@ -79,19 +82,40 @@ export default function App() {
       unsubs.push(subscribeConfig(v => { if (v) setConfigState(v); }));
       unsubs.push(subscribeTracks(v => { if (v) setTracksState(normalizeTracks(v)); }));
       unsubs.push(subscribeSchedule(v => { if (v) setScheduleState(v); }));
-      unsubs.push(subscribeMembers(v => setMembersState(v)));
+      unsubs.push(subscribeMembers(v => {
+        // Merge inbound data, but preserve local state for UIDs with pending writes
+        setMembersState(prev => {
+          const merged = { ...v };
+          for (const uid of pendingWrites.current) {
+            if (prev[uid]) merged[uid] = prev[uid];
+          }
+          return merged;
+        });
+      }));
     })();
     return () => unsubs.forEach(fn => fn?.());
   }, [user]);
 
   // Debounced save helper
   const timers = useRef({});
-  const persist = useCallback((key, fn) => {
+  const persist = useCallback((key, fn, pendingUid) => {
     setSaveStatus("saving...");
+    // Mark this UID as having a pending write
+    if (pendingUid) pendingWrites.current.add(pendingUid);
     if (timers.current[key]) clearTimeout(timers.current[key]);
     timers.current[key] = setTimeout(async () => {
-      try { await fn(); setSaveStatus("saved " + new Date().toLocaleTimeString()); }
-      catch (e) { console.error(e); setSaveStatus("save failed"); }
+      try {
+        await fn();
+        setSaveStatus("saved " + new Date().toLocaleTimeString());
+      } catch (e) {
+        console.error(e);
+        setSaveStatus("save failed");
+      }
+      // Clear pending status after write completes — short delay to let the
+      // subscription echo pass through before we start accepting inbound again
+      if (pendingUid) {
+        setTimeout(() => pendingWrites.current.delete(pendingUid), 1000);
+      }
     }, 400);
   }, []);
 
@@ -137,7 +161,7 @@ export default function App() {
     if (!uid) return;
     const updated = { ...members[uid], ownership: newOwnership };
     setMembersState(prev => ({ ...prev, [uid]: updated }));
-    persist(`member-${uid}`, () => setMember(uid, { ownership: newOwnership }));
+    persist(`member-${uid}`, () => setMember(uid, { ownership: newOwnership }), uid);
   }, [members, uidByName, persist]);
 
   const saveScheduleFn = useCallback((rounds) => {
