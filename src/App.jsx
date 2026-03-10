@@ -130,7 +130,7 @@ export default function App() {
       <div style={{ padding: "20px 24px" }}>
         {tab === "grid" && <Grid data={data} save={saveData} names={trackNames} map={trackMap} />}
         {tab === "schedule" && <Schedule data={data} save={saveData} names={trackNames} map={trackMap} />}
-        {tab === "buy" && <BuyRecs data={data} names={trackNames} map={trackMap} />}
+        {tab === "buy" && <BuyRecs data={data} save={saveData} names={trackNames} map={trackMap} />}
         {tab === "stats" && <Stats data={data} names={trackNames} map={trackMap} />}
         {tab === "trackeditor" && <Editor tracks={tracks} save={saveTracks} />}
       </div>
@@ -161,6 +161,18 @@ function Grid({ data, save, names, map }) {
   const toggle = (m, t) => { const cur = getS(m, t); const next = cur === "unowned" ? "owned" : cur === "owned" ? "buy" : "unowned"; save({ ...data, ownership: { ...data.ownership, [m]: { ...(data.ownership[m] || {}), [t]: next } } }); };
   const ownCount = useCallback((t) => data.members.filter(m => getS(m, t) === "owned").length, [data.members, getS]);
 
+  const hasBuys = useMemo(() => data.members.some(m => Object.values(data.ownership[m] || {}).some(v => v === "buy")), [data]);
+  const clearBuys = () => {
+    const newOwnership = {};
+    for (const m of data.members) {
+      const mo = data.ownership[m] || {};
+      const cleaned = {};
+      for (const [t, v] of Object.entries(mo)) { cleaned[t] = v === "buy" ? "unowned" : v; }
+      newOwnership[m] = cleaned;
+    }
+    save({ ...data, ownership: newOwnership });
+  };
+
   return (
     <div>
       <div style={{ marginBottom: 16, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -168,6 +180,7 @@ function Grid({ data, save, names, map }) {
         <button onClick={addMem} style={btnP}>+ Add</button>
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 11, color: C.textDim, fontFamily: "monospace" }}>click: unowned → owned → buy → unowned</span>
+        {hasBuys && <button onClick={clearBuys} style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, background: C.buyBg, color: C.buy, border: `1px solid ${C.buy}`, borderRadius: 5, cursor: "pointer", fontFamily: "inherit" }}>Clear All Buys</button>}
       </div>
       <div style={{ marginBottom: 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search tracks..." style={{ ...inp, width: 200 }} />
@@ -300,8 +313,55 @@ function Schedule({ data, save, names, map }) {
   );
 }
 
+// ─── Purchase Optimizer Solver ───
+function solvePurchases(members, ownership, paidTracks, maxBuys) {
+  // For each paid track, figure out who's missing it
+  const missing = {}; // track -> [members who don't own it]
+  for (const t of paidTracks) {
+    const m = members.filter(m => (ownership[m] || {})[t] !== "owned");
+    if (m.length > 0 && m.length <= members.length) missing[t] = m;
+  }
+
+  // Budget remaining per member
+  const budget = {};
+  members.forEach(m => { budget[m] = maxBuys; });
+
+  // Greedy: repeatedly pick the track closest to universal (fewest missing)
+  // that can be completed within remaining budgets
+  const assignments = []; // { member, track }
+  let improved = true;
+
+  while (improved) {
+    improved = false;
+    // Sort candidates by fewest missing (easiest to complete)
+    const candidates = Object.entries(missing)
+      .map(([track, missingMembers]) => ({ track, missing: missingMembers }))
+      .filter(c => c.missing.every(m => budget[m] > 0)) // all missing members have budget
+      .sort((a, b) => a.missing.length - b.missing.length); // fewest missing first
+
+    if (candidates.length > 0) {
+      const best = candidates[0];
+      // Assign buys
+      for (const m of best.missing) {
+        assignments.push({ member: m, track: best.track });
+        budget[m]--;
+      }
+      delete missing[best.track];
+      improved = true;
+    }
+  }
+
+  // Count how many tracks were promoted to universal
+  const promotedTracks = [...new Set(assignments.map(a => a.track))];
+
+  return { assignments, promotedTracks, budget };
+}
+
 // ─── Buy Recs ───
-function BuyRecs({ data, names, map }) {
+function BuyRecs({ data, save, names, map }) {
+  const [maxBuys, setMaxBuys] = useState(2);
+  const [solverResult, setSolverResult] = useState(null);
+
   const getS = useCallback((m, t) => (data.ownership[m] || {})[t] || "unowned", [data.ownership]);
   const paidNames = useMemo(() => names.filter(t => !map[t]?.free), [names, map]);
 
@@ -322,10 +382,113 @@ function BuyRecs({ data, names, map }) {
     return data.members.map(m => ({ member: m, missing: s.filter(t => !map[t]?.free && getS(m, t) === "unowned"), buying: s.filter(t => getS(m, t) === "buy") })).sort((a, b) => b.missing.length - a.missing.length);
   }, [data, map, getS]);
 
+  const hasBuys = useMemo(() => data.members.some(m => Object.values(data.ownership[m] || {}).some(v => v === "buy")), [data]);
+
+  const runSolver = () => {
+    const result = solvePurchases(data.members, data.ownership, paidNames, maxBuys);
+    setSolverResult(result);
+
+    // Apply buy states to ownership
+    const newOwnership = { ...data.ownership };
+    // First clear existing buys
+    for (const m of data.members) {
+      const mo = { ...(newOwnership[m] || {}) };
+      for (const [t, v] of Object.entries(mo)) { if (v === "buy") mo[t] = "unowned"; }
+      newOwnership[m] = mo;
+    }
+    // Then apply solver assignments
+    for (const { member, track } of result.assignments) {
+      newOwnership[member] = { ...(newOwnership[member] || {}), [track]: "buy" };
+    }
+    save({ ...data, ownership: newOwnership });
+  };
+
+  const clearBuys = () => {
+    const newOwnership = {};
+    for (const m of data.members) {
+      const mo = data.ownership[m] || {};
+      const cleaned = {};
+      for (const [t, v] of Object.entries(mo)) { cleaned[t] = v === "buy" ? "unowned" : v; }
+      newOwnership[m] = cleaned;
+    }
+    save({ ...data, ownership: newOwnership });
+    setSolverResult(null);
+  };
+
   if (data.members.length < 2) return <Empty icon="🛒" title="Need 2+ members" sub="Add members in the Grid" />;
+
+  // Group solver results by member for display
+  const solverByMember = solverResult ? data.members.map(m => ({
+    member: m,
+    buys: solverResult.assignments.filter(a => a.member === m).map(a => a.track),
+    remaining: solverResult.budget[m],
+  })) : null;
 
   return (
     <div>
+      {/* Optimizer */}
+      <div style={{ marginBottom: 30, padding: 20, background: C.surface, borderRadius: 8, border: `1px solid ${C.border}` }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div>
+            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>Optimize Purchases</h3>
+            <p style={{ fontSize: 12, color: C.textMuted, margin: 0 }}>Find the maximum tracks promotable to universal within a per-member buy limit</p>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {hasBuys && <button onClick={clearBuys} style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, background: C.buyBg, color: C.buy, border: `1px solid ${C.buy}`, borderRadius: 6, cursor: "pointer", fontFamily: "inherit" }}>Clear All Buys</button>}
+            <button onClick={runSolver} style={{ ...btnP, padding: "7px 18px" }}>Run Optimizer</button>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: solverResult ? 20 : 0 }}>
+          <label style={{ fontSize: 12, color: C.textMuted, display: "flex", alignItems: "center", gap: 8 }}>
+            Max buys per member:
+            <input type="range" min={1} max={10} value={maxBuys} onChange={e => setMaxBuys(+e.target.value)} style={{ width: 120 }} />
+            <span style={{ fontFamily: "monospace", color: C.accent, fontWeight: 800, fontSize: 16, minWidth: 20, textAlign: "center" }}>{maxBuys}</span>
+          </label>
+        </div>
+
+        {solverResult && (
+          <div>
+            {/* Summary */}
+            <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
+              <div style={{ padding: "10px 16px", background: C.ownedBg, borderRadius: 6, border: "1px solid rgba(34,197,94,0.2)" }}>
+                <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "monospace", color: C.owned }}>{solverResult.promotedTracks.length}</div>
+                <div style={{ fontSize: 10, color: C.textMuted }}>tracks promoted to universal</div>
+              </div>
+              <div style={{ padding: "10px 16px", background: C.buyBg, borderRadius: 6, border: "1px solid rgba(245,158,11,0.2)" }}>
+                <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "monospace", color: C.buy }}>{solverResult.assignments.length}</div>
+                <div style={{ fontSize: 10, color: C.textMuted }}>total purchases needed</div>
+              </div>
+            </div>
+
+            {/* Promoted tracks */}
+            {solverResult.promotedTracks.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <h4 style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, marginBottom: 6 }}>Newly Universal Tracks</h4>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {solverResult.promotedTracks.map(t => <span key={t} style={{ padding: "5px 10px", background: C.ownedBg, border: "1px solid rgba(34,197,94,0.2)", borderRadius: 5, fontSize: 11, color: C.owned, fontWeight: 500 }}>{t}</span>)}
+                </div>
+              </div>
+            )}
+
+            {/* Assignments by member */}
+            <h4 style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, marginBottom: 8 }}>Purchase Assignments</h4>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
+              {solverByMember.map(r => (
+                <div key={r.member} style={{ padding: 12, background: C.bg, borderRadius: 6, border: `1px solid ${C.border}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontWeight: 700, fontSize: 13 }}>{r.member}</span>
+                    <span style={{ fontSize: 10, fontFamily: "monospace", color: r.buys.length === 0 ? C.textDim : C.buy }}>{r.buys.length}/{maxBuys} buys</span>
+                  </div>
+                  {r.buys.length === 0 ? <div style={{ fontSize: 11, color: C.textDim }}>No purchases needed</div>
+                    : r.buys.map(t => <div key={t} style={{ fontSize: 11, color: C.buy, padding: "2px 0" }}>🟡 {t}</div>)}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Schedule-based recs */}
       {schedRecs && schedRecs.some(r => r.missing.length > 0) && (
         <div style={{ marginBottom: 30 }}>
           <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>For Current Schedule</h3>
@@ -342,6 +505,8 @@ function BuyRecs({ data, names, map }) {
           </div>
         </div>
       )}
+
+      {/* General best-value recs */}
       <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>Best Value Purchases</h3>
       <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 14 }}>Paid tracks where buying gets closest to full coverage</p>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 12 }}>
