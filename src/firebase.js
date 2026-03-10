@@ -1,5 +1,6 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, setDoc, collection, onSnapshot, query, deleteDoc } from 'firebase/firestore';
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut as fbSignOut, onAuthStateChanged } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: "AIzaSyBVieauZ2HicKTq4TvzJ_RD2N9R0nQaxrM",
@@ -12,39 +13,113 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
+const provider = new GoogleAuthProvider();
 
-const COLLECTION = 'league';
+const LEAGUE = 'default'; // namespace for multi-tenant later
+const leagueRef = () => doc(db, 'leagues', LEAGUE);
+const configRef = () => doc(leagueRef(), 'data', 'config');
+const tracksRef = () => doc(leagueRef(), 'data', 'tracks');
+const scheduleRef = () => doc(leagueRef(), 'data', 'schedule');
+const memberRef = (uid) => doc(leagueRef(), 'members', uid);
+const membersCol = () => collection(leagueRef(), 'members');
 
-// Simple key-value storage backed by Firestore
-// Each key becomes a document in the 'league' collection
-export async function getData(key) {
-  try {
-    const snap = await getDoc(doc(db, COLLECTION, key));
-    if (snap.exists()) return snap.data().value;
-    return null;
-  } catch (e) {
-    console.error('getData failed:', e);
-    return null;
-  }
+// ─── Auth ───
+export function onAuth(callback) {
+  return onAuthStateChanged(auth, callback);
 }
 
-export async function setData(key, value) {
-  try {
-    await setDoc(doc(db, COLLECTION, key), { value, updatedAt: new Date().toISOString() });
-    return true;
-  } catch (e) {
-    console.error('setData failed:', e);
-    return false;
-  }
+export async function signIn() {
+  return signInWithPopup(auth, provider);
 }
 
-// Real-time listener — calls onChange whenever the document updates
-export function subscribe(key, onChange) {
-  return onSnapshot(doc(db, COLLECTION, key), (snap) => {
-    if (snap.exists()) {
-      onChange(snap.data().value);
-    }
-  }, (err) => {
-    console.error('subscribe error:', err);
+export async function signOut() {
+  return fbSignOut(auth);
+}
+
+// ─── League Config ───
+export async function getConfig() {
+  const snap = await getDoc(configRef());
+  return snap.exists() ? snap.data() : null;
+}
+
+export async function setConfig(data) {
+  await setDoc(configRef(), { ...data, updatedAt: new Date().toISOString() }, { merge: true });
+}
+
+export function subscribeConfig(callback) {
+  return onSnapshot(configRef(), snap => {
+    callback(snap.exists() ? snap.data() : null);
+  });
+}
+
+// ─── Tracks ───
+export async function getTracks() {
+  const snap = await getDoc(tracksRef());
+  return snap.exists() ? snap.data().list : null;
+}
+
+export async function setTracks(list) {
+  await setDoc(tracksRef(), { list, updatedAt: new Date().toISOString() });
+}
+
+export function subscribeTracks(callback) {
+  return onSnapshot(tracksRef(), snap => {
+    callback(snap.exists() ? snap.data().list : null);
+  });
+}
+
+// ─── Schedule ───
+export async function getSchedule() {
+  const snap = await getDoc(scheduleRef());
+  return snap.exists() ? snap.data().rounds : [];
+}
+
+export async function setSchedule(rounds) {
+  await setDoc(scheduleRef(), { rounds, updatedAt: new Date().toISOString() });
+}
+
+export function subscribeSchedule(callback) {
+  return onSnapshot(scheduleRef(), snap => {
+    callback(snap.exists() ? snap.data().rounds : []);
+  });
+}
+
+// ─── Members ───
+// Each member doc: { displayName, ownership: {trackName: status}, joinedAt }
+export async function getMember(uid) {
+  const snap = await getDoc(memberRef(uid));
+  return snap.exists() ? snap.data() : null;
+}
+
+export async function setMember(uid, data) {
+  await setDoc(memberRef(uid), { ...data, updatedAt: new Date().toISOString() }, { merge: true });
+}
+
+export async function deleteMember(uid) {
+  await deleteDoc(memberRef(uid));
+}
+
+// Subscribe to ALL members (real-time)
+export function subscribeMembers(callback) {
+  return onSnapshot(query(membersCol()), snap => {
+    const members = {};
+    snap.forEach(doc => { members[doc.id] = doc.data(); });
+    callback(members);
+  });
+}
+
+// ─── First-run detection ───
+export async function leagueExists() {
+  const snap = await getDoc(configRef());
+  return snap.exists();
+}
+
+export async function createLeague(name, adminUid) {
+  await setDoc(configRef(), {
+    name,
+    adminUids: [adminUid],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   });
 }
