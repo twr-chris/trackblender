@@ -116,6 +116,18 @@ export default function App() {
     return o;
   }, [members]);
 
+  // Racing status: { memberName: boolean }
+  const racingStatus = useMemo(() => {
+    const r = {};
+    for (const [uid, m] of Object.entries(members)) {
+      r[m.displayName] = m.racing !== false; // default true
+    }
+    return r;
+  }, [members]);
+
+  // Members who count toward calculations
+  const racingNames = useMemo(() => memberNames.filter(n => racingStatus[n]), [memberNames, racingStatus]);
+
   const trackNames = useMemo(() => tracks.map(t => t.name).sort(), [tracks]);
   const trackMap = useMemo(() => Object.fromEntries(tracks.map(t => [t.name, t])), [tracks]);
 
@@ -151,7 +163,7 @@ export default function App() {
   if (loading) return <FullScreen>Loading league data...</FullScreen>;
 
   // ─── Data helpers for child components ───
-  const data = { members: memberNames, ownership, schedule };
+  const data = { members: memberNames, racingMembers: racingNames, racing: racingStatus, ownership, schedule };
 
   const save = (newData) => {
     // Handle schedule changes
@@ -183,7 +195,7 @@ export default function App() {
           <div style={{ width: 36, height: 36, background: `linear-gradient(135deg, ${C.accent}, #f59e0b)`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, color: "#fff" }}>T</div>
           <div>
             <div style={{ fontSize: 15, fontWeight: 700 }}>{config?.name || "TrackBlender"}</div>
-            <div style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>{memberNames.length} members · {trackNames.length} tracks</div>
+            <div style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>{racingNames.length}/{memberNames.length} racing · {trackNames.length} tracks</div>
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -332,7 +344,7 @@ function Grid({ data, save, names, map, currentUser, isAdmin }) {
     const next = cur === "unowned" ? "owned" : cur === "owned" ? "buy" : "unowned";
     save({ ...data, ownership: { ...data.ownership, [m]: { ...(data.ownership[m] || {}), [t]: next } } });
   };
-  const ownCount = useCallback((t) => data.members.filter(m => getS(m, t) === "owned").length, [data.members, getS]);
+  const ownCount = useCallback((t) => data.racingMembers.filter(m => getS(m, t) === "owned").length, [data.racingMembers, getS]);
 
   const hasBuys = useMemo(() => data.members.some(m => Object.values(data.ownership[m] || {}).some(v => v === "buy")), [data]);
   const clearBuys = () => {
@@ -363,15 +375,19 @@ function Grid({ data, save, names, map, currentUser, isAdmin }) {
             <thead><tr style={{ background: C.surface }}>
               <th style={{ ...thS, minWidth: 280, textAlign: "left", position: "sticky", left: 0, background: C.surface, zIndex: 10 }}>Track</th>
               <th style={{ ...thS, width: 30, color: C.textDim, fontSize: 10 }}>#</th>
-              {data.members.map(m => <th key={m} style={{ ...thS, minWidth: 70, color: m === currentUser ? C.accent : C.textMuted }}>
+              {data.members.map(m => {
+                const isRacing = data.racing[m] !== false;
+                return <th key={m} style={{ ...thS, minWidth: 70, color: m === currentUser ? C.accent : isRacing ? C.textMuted : C.textDim, opacity: isRacing ? 1 : 0.5 }}>
                 <span style={{ fontSize: 11, fontWeight: 600, maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>{m}</span>
                 {m === currentUser && <span style={{ fontSize: 8, color: C.accent }}>you</span>}
-              </th>)}
+                {!isRacing && <span style={{ fontSize: 8, color: C.textDim }}>not racing</span>}
+              </th>;
+              })}
             </tr></thead>
             <tbody>
               {filtered.map((track, i) => {
                 const tr = map[track]; const isFree = tr?.free;
-                const count = ownCount(track); const allOwn = !isFree && count === data.members.length && data.members.length > 0;
+                const count = ownCount(track); const allOwn = !isFree && count === data.racingMembers.length && data.racingMembers.length > 0;
                 const bg = allOwn ? "rgba(34,197,94,0.04)" : isFree ? "rgba(56,189,248,0.02)" : (i % 2 === 0 ? "transparent" : C.surface);
                 const stickyBg = allOwn ? "rgba(34,197,94,0.06)" : isFree ? "rgba(56,189,248,0.03)" : (i % 2 === 0 ? C.bg : C.surface);
                 return (
@@ -381,10 +397,11 @@ function Grid({ data, save, names, map, currentUser, isAdmin }) {
                     </td>
                     <td style={{ ...tdS, textAlign: "center", fontFamily: "monospace", fontWeight: 700, color: isFree ? C.free : count === 0 ? C.textDim : allOwn ? C.owned : C.text, fontSize: 11 }}>{isFree ? "—" : count}</td>
                     {data.members.map(m => {
-                      if (isFree) return <td key={m} style={{ ...tdS, textAlign: "center" }}><span style={{ color: C.free, fontSize: 10 }}>✓</span></td>;
+                      const isRacing = data.racing[m] !== false;
+                      if (isFree) return <td key={m} style={{ ...tdS, textAlign: "center", opacity: isRacing ? 1 : 0.4 }}><span style={{ color: C.free, fontSize: 10 }}>✓</span></td>;
                       const s = getS(m, track);
                       const canEdit = m === currentUser || isAdmin;
-                      return <td key={m} onClick={() => canEdit && toggle(m, track)} style={{ ...tdS, textAlign: "center", cursor: canEdit ? "pointer" : "default", userSelect: "none", background: s === "owned" ? C.ownedBg : s === "buy" ? C.buyBg : "transparent", opacity: canEdit ? 1 : 0.8 }}>
+                      return <td key={m} onClick={() => canEdit && toggle(m, track)} style={{ ...tdS, textAlign: "center", cursor: canEdit ? "pointer" : "default", userSelect: "none", background: s === "owned" ? C.ownedBg : s === "buy" ? C.buyBg : "transparent", opacity: isRacing ? (canEdit ? 1 : 0.8) : 0.4 }}>
                         {s === "owned" ? <span style={{ color: C.owned, fontWeight: 700, fontSize: 14 }}>✓</span> : s === "buy" ? <span style={{ color: C.buy, fontWeight: 700, fontSize: 11 }}>BUY</span> : <span style={{ color: C.textDim }}>·</span>}
                       </td>;
                     })}
@@ -402,11 +419,11 @@ function Grid({ data, save, names, map, currentUser, isAdmin }) {
 
 // ─── Schedule Builder ───
 function Schedule({ data, save, names, map, isAdmin }) {
-  const [minOwn, setMinOwn] = useState(Math.max(1, data.members.length));
+  const [minOwn, setMinOwn] = useState(Math.max(1, data.racingMembers.length));
   const [catF, setCatF] = useState("all");
   const getS = useCallback((m, t) => (data.ownership[m] || {})[t] || "unowned", [data.ownership]);
-  const effOwn = useCallback((t) => map[t]?.free ? data.members.length : data.members.filter(m => getS(m, t) === "owned").length, [map, data.members, getS]);
-  const buyN = useCallback((t) => map[t]?.free ? 0 : data.members.filter(m => getS(m, t) === "buy").length, [map, data.members, getS]);
+  const effOwn = useCallback((t) => map[t]?.free ? data.racingMembers.length : data.racingMembers.filter(m => getS(m, t) === "owned").length, [map, data.racingMembers, getS]);
+  const buyN = useCallback((t) => map[t]?.free ? 0 : data.racingMembers.filter(m => getS(m, t) === "buy").length, [map, data.racingMembers, getS]);
 
   const eligible = useMemo(() => {
     return names.filter(t => map[t] && matchCat(map[t], catF))
@@ -433,7 +450,7 @@ function Schedule({ data, save, names, map, isAdmin }) {
                 <span style={{ fontFamily: "monospace", fontSize: 10, color: C.textDim, width: 24 }}>R{i + 1}</span>
                 <Badges t={tr} />
                 <span style={{ flex: 1, fontSize: 12, fontWeight: 500 }}>{track}</span>
-                <span style={{ fontSize: 10, fontFamily: "monospace", color: ow === data.members.length ? C.owned : C.buy }}>{ow}/{data.members.length}</span>
+                <span style={{ fontSize: 10, fontFamily: "monospace", color: ow === data.racingMembers.length ? C.owned : C.buy }}>{ow}/{data.racingMembers.length}</span>
                 {isAdmin && <><button onClick={() => move(i, -1)} style={mbtn}>↑</button><button onClick={() => move(i, 1)} style={mbtn}>↓</button><button onClick={() => rem(i)} style={{ ...mbtn, color: C.danger }}>×</button></>}
               </div>;
             })}
@@ -459,7 +476,7 @@ function Schedule({ data, save, names, map, isAdmin }) {
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
           <h3 style={{ fontSize: 14, fontWeight: 700, marginRight: 8 }}>Available</h3>
           <label style={{ fontSize: 11, color: C.textMuted, display: "flex", alignItems: "center", gap: 4 }}>
-            Min: <input type="range" min={0} max={data.members.length} value={minOwn} onChange={e => setMinOwn(+e.target.value)} style={{ width: 80 }} />
+            Min: <input type="range" min={0} max={data.racingMembers.length} value={minOwn} onChange={e => setMinOwn(+e.target.value)} style={{ width: 80 }} />
             <span style={{ fontFamily: "monospace", color: C.accent, fontWeight: 700 }}>{minOwn}</span>
           </label>
         </div>
@@ -470,7 +487,7 @@ function Schedule({ data, save, names, map, isAdmin }) {
           {eligible.map(t => {
             const inS = sched.includes(t.name);
             return <div key={t.name} onClick={() => isAdmin && !inS && add(t.name)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", background: inS ? "rgba(34,197,94,0.06)" : C.surface, borderRadius: 5, border: `1px solid ${inS ? "rgba(34,197,94,0.2)" : C.border}`, cursor: isAdmin && !inS ? "pointer" : "default", opacity: inS ? 0.5 : 1 }}>
-              <div style={{ width: 28, height: 28, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "monospace", fontSize: 11, fontWeight: 800, background: t.owners === data.members.length ? C.ownedBg : C.surface, color: t.owners === data.members.length ? C.owned : C.text, border: `1px solid ${t.owners === data.members.length ? "rgba(34,197,94,0.3)" : C.border}` }}>{t.owners}</div>
+              <div style={{ width: 28, height: 28, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "monospace", fontSize: 11, fontWeight: 800, background: t.owners === data.racingMembers.length ? C.ownedBg : C.surface, color: t.owners === data.racingMembers.length ? C.owned : C.text, border: `1px solid ${t.owners === data.racingMembers.length ? "rgba(34,197,94,0.3)" : C.border}` }}>{t.owners}</div>
               <div style={{ flex: 1 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 500 }}>{t.name} <CfgBadge n={t.track?.configs} /></div>
                 <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}><CatTags cats={t.track?.cats} /><FreeBadge on={t.track?.free} />{t.buyers > 0 && <span style={{ fontSize: 10, color: C.textDim }}>{t.buyers} buying</span>}</div>
@@ -519,12 +536,12 @@ function BuyRecs({ data, save, names, map }) {
   const paidNames = useMemo(() => names.filter(t => !map[t]?.free), [names, map]);
 
   const recs = useMemo(() => {
-    if (data.members.length < 2) return [];
-    return data.members.map(mem => {
+    if (data.racingMembers.length < 2) return [];
+    return data.racingMembers.map(mem => {
       const scored = paidNames.filter(t => getS(mem, t) !== "owned").map(t => {
-        const oth = data.members.filter(m => m !== mem && getS(m, t) === "owned").length;
-        return { track: t, oth, total: oth + 1, cov: (oth + 1) / data.members.length, cfg: map[t]?.configs };
-      }).filter(t => t.oth >= Math.ceil(data.members.length * 0.5)).sort((a, b) => b.oth - a.oth);
+        const oth = data.racingMembers.filter(m => m !== mem && getS(m, t) === "owned").length;
+        return { track: t, oth, total: oth + 1, cov: (oth + 1) / data.racingMembers.length, cfg: map[t]?.configs };
+      }).filter(t => t.oth >= Math.ceil(data.racingMembers.length * 0.5)).sort((a, b) => b.oth - a.oth);
       return { member: mem, recs: scored.slice(0, 10) };
     });
   }, [data, paidNames, getS, map]);
@@ -532,9 +549,10 @@ function BuyRecs({ data, save, names, map }) {
   const hasBuys = useMemo(() => data.members.some(m => Object.values(data.ownership[m] || {}).some(v => v === "buy")), [data]);
 
   const runSolver = () => {
-    const result = solvePurchases(data.members, data.ownership, paidNames, maxBuys);
+    const result = solvePurchases(data.racingMembers, data.ownership, paidNames, maxBuys);
     setSolverResult(result);
     const newOwnership = { ...data.ownership };
+    // Clear existing buys for all members (racing or not)
     for (const m of data.members) { const mo = { ...(newOwnership[m] || {}) }; for (const [t, v] of Object.entries(mo)) { if (v === "buy") mo[t] = "unowned"; } newOwnership[m] = mo; }
     for (const { member, track } of result.assignments) { newOwnership[member] = { ...(newOwnership[member] || {}), [track]: "buy" }; }
     save({ ...data, ownership: newOwnership });
@@ -547,9 +565,9 @@ function BuyRecs({ data, save, names, map }) {
     setSolverResult(null);
   };
 
-  if (data.members.length < 2) return <Empty icon="🛒" title="Need 2+ members" sub="Add members in the Grid" />;
+  if (data.racingMembers.length < 2) return <Empty icon="🛒" title="Need 2+ racing members" sub="Add members in the Grid" />;
 
-  const solverByMember = solverResult ? data.members.map(m => ({ member: m, buys: solverResult.assignments.filter(a => a.member === m).map(a => a.track), remaining: solverResult.budget[m] })) : null;
+  const solverByMember = solverResult ? data.racingMembers.map(m => ({ member: m, buys: solverResult.assignments.filter(a => a.member === m).map(a => a.track), remaining: solverResult.budget[m] })) : null;
 
   return (
     <div>
@@ -619,7 +637,7 @@ function BuyRecs({ data, save, names, map }) {
             : r.recs.map((t, i) => <div key={t.track} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderBottom: i < r.recs.length - 1 ? `1px solid ${C.border}` : "none" }}>
               <div style={{ width: 22, height: 22, borderRadius: 4, background: t.cov >= 0.9 ? C.ownedBg : C.surface, border: `1px solid ${t.cov >= 0.9 ? "rgba(34,197,94,0.3)" : C.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 800, fontFamily: "monospace", color: t.cov >= 0.9 ? C.owned : C.text }}>{t.total}</div>
               <span style={{ flex: 1, fontSize: 11 }}>{t.track} {t.cfg != null && <span style={{ color: C.textDim, fontSize: 9 }}>({t.cfg}cfg)</span>}</span>
-              <span style={{ fontSize: 10, color: C.textMuted, fontFamily: "monospace" }}>{t.oth}/{data.members.length - 1}</span>
+              <span style={{ fontSize: 10, color: C.textMuted, fontFamily: "monospace" }}>{t.oth}/{data.racingMembers.length - 1}</span>
             </div>)}
         </div>)}
       </div>
@@ -632,16 +650,16 @@ function Stats({ data, names, map }) {
   const getS = useCallback((m, t) => (data.ownership[m] || {})[t] || "unowned", [data.ownership]);
   const paidNames = useMemo(() => names.filter(t => !map[t]?.free), [names, map]);
   const freeCount = useMemo(() => names.filter(t => map[t]?.free).length, [names, map]);
-  const effOwn = useCallback((t) => map[t]?.free ? data.members.length : data.members.filter(m => getS(m, t) === "owned").length, [map, data.members, getS]);
+  const effOwn = useCallback((t) => map[t]?.free ? data.racingMembers.length : data.racingMembers.filter(m => getS(m, t) === "owned").length, [map, data.racingMembers, getS]);
 
   const stats = useMemo(() => {
-    if (!data.members.length) return null;
-    const ms = data.members.map(m => {
+    if (!data.racingMembers.length) return null;
+    const ms = data.racingMembers.map(m => {
       const owned = paidNames.filter(t => getS(m, t) === "owned").length;
       const buying = paidNames.filter(t => getS(m, t) === "buy").length;
       return { name: m, owned, buying, total: owned + freeCount };
     }).sort((a, b) => b.owned - a.owned);
-    return { ms, uni: paidNames.filter(t => effOwn(t) === data.members.length), almost: paidNames.filter(t => effOwn(t) === data.members.length - 1) };
+    return { ms, uni: paidNames.filter(t => effOwn(t) === data.racingMembers.length), almost: paidNames.filter(t => effOwn(t) === data.racingMembers.length - 1) };
   }, [data, paidNames, freeCount, effOwn, getS]);
 
   if (!stats) return <Empty icon="📊" title="No data" sub="Add members first" />;
@@ -649,7 +667,7 @@ function Stats({ data, names, map }) {
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12, marginBottom: 24 }}>
-        <StatCard label="Members" value={data.members.length} />
+        <StatCard label="Racing" value={data.racingMembers.length} />
         <StatCard label="Free Tracks" value={freeCount} color={C.free} />
         <StatCard label="Paid Tracks" value={paidNames.length} />
         <StatCard label="Universal" value={stats.uni.length} color={C.owned} />
@@ -816,14 +834,18 @@ function LeagueAdmin({ config, members, nameByUid }) {
       {/* Members */}
       <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Members ({Object.keys(members).length})</h4>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {Object.entries(members).map(([uid, m]) => (
-          <div key={uid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: C.surface, borderRadius: 6, border: `1px solid ${C.border}` }}>
+        {Object.entries(members).map(([uid, m]) => {
+          const isRacing = m.racing !== false;
+          return (
+          <div key={uid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: isRacing ? C.surface : "rgba(255,255,255,0.02)", borderRadius: 6, border: `1px solid ${C.border}`, opacity: isRacing ? 1 : 0.6 }}>
             <span style={{ flex: 1, fontSize: 13 }}>{m.displayName}</span>
             <span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>{Object.values(m.ownership || {}).filter(v => v === "owned").length} tracks</span>
+            <button onClick={async () => { await setMember(uid, { racing: !isRacing }); }} style={{ padding: "3px 8px", fontSize: 9, fontWeight: 700, fontFamily: "monospace", borderRadius: 3, cursor: "pointer", border: `1px solid ${isRacing ? C.owned : C.textDim}`, background: isRacing ? C.ownedBg : "transparent", color: isRacing ? C.owned : C.textDim }}>{isRacing ? "RACING" : "NOT RACING"}</button>
             {adminUids.includes(uid) && <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, fontWeight: 700, fontFamily: "monospace", background: C.adminBg, color: C.admin }}>ADMIN</span>}
             {!adminUids.includes(uid) && <button onClick={() => removeMemberFn(uid)} style={{ ...mbtn, color: C.danger }}>remove</button>}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
