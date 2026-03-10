@@ -143,7 +143,7 @@ const DEFAULT_TRACKS = [
   { name: "Watkins Glen International", cats: ["road"], configs: null, free: false },
   { name: "WeatherTech Raceway Laguna Seca", cats: ["road"], configs: null, free: false },
   { name: "Weedsport Speedway", cats: ["dirt-oval"], configs: null, free: false },
-  { name: "Wild West Motorsports Park", cats: ["dirt-road"], configs: null, free: false },
+  { name: "Wild West Motorsports Park", cats: ["dirt-road"], configs: null, free: true },
   { name: "Williams Grove Speedway", cats: ["dirt-oval"], configs: null, free: false },
   { name: "Willow Springs Raceway", cats: ["road"], configs: null, free: false },
   { name: "Winton Motor Raceway", cats: ["road"], configs: null, free: true },
