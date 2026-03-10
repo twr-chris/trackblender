@@ -99,7 +99,7 @@ const DEFAULT_TRACKS = [
   { name: "Okayama International Circuit", cats: ["road"], configs: null, free: true },
   { name: "Oran Park Raceway", cats: ["road"], configs: null, free: true },
   { name: "Oswego Speedway", cats: ["oval", "dirt-oval"], configs: null, free: false },
-  { name: "Oulton Park Circuit", cats: ["road"], configs: null, free: false },
+  { name: "Oulton Park Circuit", cats: ["road"], configs: null, free: true },
   { name: "Oxford Plains Speedway", cats: ["oval"], configs: null, free: true },
   { name: "Phillip Island Circuit", cats: ["road"], configs: null, free: false },
   { name: "Phoenix Raceway", cats: ["oval"], configs: null, free: false },
