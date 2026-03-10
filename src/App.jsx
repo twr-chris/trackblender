@@ -1,15 +1,19 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { getData, setData, subscribe } from "./firebase.js";
+import {
+  onAuth, signIn, signOut,
+  getConfig, setConfig, subscribeConfig,
+  getTracks, setTracks, subscribeTracks,
+  getSchedule, setSchedule, subscribeSchedule,
+  getMember, setMember, deleteMember, subscribeMembers,
+  leagueExists, createLeague,
+} from "./firebase.js";
 import DEFAULT_TRACKS, { normalizeTracks } from "./tracks.js";
 
 const ALL_CATS = ["road", "oval", "dirt-oval", "dirt-road"];
 const CAT_LABELS = { all: "All", road: "Road", oval: "Oval", "dirt-oval": "Dirt Oval", "dirt-road": "Dirt Road" };
-const DATA_KEY = "leagueData";
-const TRACKS_KEY = "trackList";
 
 const C = {
-  bg: "#0c0e13", surface: "#14171e",
-  border: "#252a35",
+  bg: "#0c0e13", surface: "#14171e", border: "#252a35",
   text: "#e8eaf0", textMuted: "#7a8299", textDim: "#4a5168",
   accent: "#e85d2c", accentGlow: "rgba(232, 93, 44, 0.15)",
   owned: "#22c55e", ownedBg: "rgba(34, 197, 94, 0.1)",
@@ -47,100 +51,265 @@ const mbtn = { background: "none", border: "none", color: C.textMuted, cursor: "
 
 // ─── App Root ───
 export default function App() {
-  const [data, setDataState] = useState({ members: [], ownership: {}, schedule: [] });
+  const [user, setUser] = useState(undefined); // undefined=loading, null=signed out, object=signed in
+  const [config, setConfigState] = useState(null);
   const [tracks, setTracksState] = useState(DEFAULT_TRACKS);
+  const [schedule, setScheduleState] = useState([]);
+  const [members, setMembersState] = useState({}); // {uid: {displayName, ownership, ...}}
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("grid");
   const [saveStatus, setSaveStatus] = useState("");
-  const [adminMode, setAdminMode] = useState(false);
-  const saveTimer = useRef(null);
-  const skipNextSync = useRef({ data: false, tracks: false });
 
-  // Load initial data, then subscribe for real-time updates
+  // Auth listener
+  useEffect(() => onAuth(u => setUser(u || null)), []);
+
+  // Once authed, load data + subscribe
   useEffect(() => {
+    if (!user) return;
     let unsubs = [];
     (async () => {
-      const [d, t] = await Promise.all([getData(DATA_KEY), getData(TRACKS_KEY)]);
-      if (d) setDataState(d);
-      if (t) setTracksState(normalizeTracks(t));
+      // Load initial
+      const [cfg, trk, sch] = await Promise.all([getConfig(), getTracks(), getSchedule()]);
+      if (cfg) setConfigState(cfg);
+      if (trk) setTracksState(normalizeTracks(trk));
+      if (sch) setScheduleState(sch);
       setLoading(false);
 
-      // Real-time sync: when another user changes data, update local state
-      unsubs.push(subscribe(DATA_KEY, (val) => {
-        if (skipNextSync.current.data) { skipNextSync.current.data = false; return; }
-        if (val) setDataState(val);
-      }));
-      unsubs.push(subscribe(TRACKS_KEY, (val) => {
-        if (skipNextSync.current.tracks) { skipNextSync.current.tracks = false; return; }
-        if (val) setTracksState(normalizeTracks(val));
-      }));
+      // Subscribe for real-time
+      unsubs.push(subscribeConfig(v => { if (v) setConfigState(v); }));
+      unsubs.push(subscribeTracks(v => { if (v) setTracksState(normalizeTracks(v)); }));
+      unsubs.push(subscribeSchedule(v => { if (v) setScheduleState(v); }));
+      unsubs.push(subscribeMembers(v => setMembersState(v)));
     })();
-    return () => unsubs.forEach(fn => fn && fn());
-  }, []);
+    return () => unsubs.forEach(fn => fn?.());
+  }, [user]);
 
-  const persist = useCallback((key, val, which) => {
+  // Debounced save helper
+  const timers = useRef({});
+  const persist = useCallback((key, fn) => {
     setSaveStatus("saving...");
-    // Skip the next sync event since we just wrote this data
-    skipNextSync.current[which] = true;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      const ok = await setData(key, val);
-      setSaveStatus(ok ? "saved " + new Date().toLocaleTimeString() : "save failed");
+    if (timers.current[key]) clearTimeout(timers.current[key]);
+    timers.current[key] = setTimeout(async () => {
+      try { await fn(); setSaveStatus("saved " + new Date().toLocaleTimeString()); }
+      catch (e) { console.error(e); setSaveStatus("save failed"); }
     }, 400);
   }, []);
 
-  const saveData = useCallback((d) => { setDataState(d); persist(DATA_KEY, d, "data"); }, [persist]);
-  const saveTracks = useCallback((t) => { setTracksState(t); persist(TRACKS_KEY, t, "tracks"); }, [persist]);
+  const isAdmin = config?.adminUids?.includes(user?.uid);
+  const myMember = members[user?.uid];
+
+  // ─── Derived data in the old format for component compatibility ───
+  const memberList = useMemo(() =>
+    Object.entries(members).map(([uid, m]) => ({ uid, name: m.displayName })).sort((a, b) => a.name.localeCompare(b.name)),
+    [members]
+  );
+  const memberNames = useMemo(() => memberList.map(m => m.name), [memberList]);
+  const uidByName = useMemo(() => Object.fromEntries(memberList.map(m => [m.name, m.uid])), [memberList]);
+  const nameByUid = useMemo(() => Object.fromEntries(memberList.map(m => [m.uid, m.name])), [memberList]);
+
+  // Merged ownership: { memberName: { trackName: status } }
+  const ownership = useMemo(() => {
+    const o = {};
+    for (const [uid, m] of Object.entries(members)) {
+      o[m.displayName] = m.ownership || {};
+    }
+    return o;
+  }, [members]);
 
   const trackNames = useMemo(() => tracks.map(t => t.name).sort(), [tracks]);
   const trackMap = useMemo(() => Object.fromEntries(tracks.map(t => [t.name, t])), [tracks]);
 
-  if (loading) return <div style={{ background: C.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontFamily: "monospace" }}><div>Loading...</div></div>;
+  // Save helpers
+  const saveOwnership = useCallback((memberName, newOwnership) => {
+    const uid = uidByName[memberName];
+    if (!uid) return;
+    const updated = { ...members[uid], ownership: newOwnership };
+    setMembersState(prev => ({ ...prev, [uid]: updated }));
+    persist(`member-${uid}`, () => setMember(uid, { ownership: newOwnership }));
+  }, [members, uidByName, persist]);
 
-  const mainTabs = [{ id: "grid", label: "Ownership Grid", icon: "▦" }, { id: "schedule", label: "Schedule Builder", icon: "📅" }, { id: "buy", label: "Buy Recs", icon: "🛒" }, { id: "stats", label: "Overview", icon: "📊" }];
-  const admTabs = [{ id: "trackeditor", label: "Track Editor", icon: "🔧" }];
-  const allTabs = adminMode ? [...mainTabs, ...admTabs] : mainTabs;
+  const saveScheduleFn = useCallback((rounds) => {
+    setScheduleState(rounds);
+    persist('schedule', () => setSchedule(rounds));
+  }, [persist]);
+
+  const saveTracksFn = useCallback((list) => {
+    setTracksState(list);
+    persist('tracks', () => setTracks(list));
+  }, [persist]);
+
+  // ─── Auth screen ───
+  if (user === undefined) return <FullScreen>Loading...</FullScreen>;
+  if (user === null) return <SignInScreen />;
+
+  // ─── First-run: create league ───
+  if (!loading && !config) return <CreateLeagueScreen user={user} onCreated={(cfg) => setConfigState(cfg)} />;
+
+  // ─── Claim screen: user is authed but has no member doc ───
+  if (!loading && !myMember) return <ClaimScreen user={user} members={members} config={config} />;
+
+  if (loading) return <FullScreen>Loading league data...</FullScreen>;
+
+  // ─── Data helpers for child components ───
+  const data = { members: memberNames, ownership, schedule };
+
+  const save = (newData) => {
+    // Handle schedule changes
+    if (newData.schedule !== data.schedule) {
+      saveScheduleFn(newData.schedule);
+    }
+    // Handle ownership changes
+    for (const name of newData.members) {
+      if (newData.ownership[name] !== data.ownership[name]) {
+        saveOwnership(name, newData.ownership[name]);
+      }
+    }
+  };
+
+  const mainTabs = [
+    { id: "grid", label: "Ownership Grid", icon: "▦" },
+    { id: "schedule", label: "Schedule Builder", icon: "📅" },
+    { id: "buy", label: "Buy Recs", icon: "🛒" },
+    { id: "stats", label: "Overview", icon: "📊" },
+  ];
+  const admTabs = isAdmin ? [{ id: "trackeditor", label: "Track Editor", icon: "🔧" }, { id: "leagueadmin", label: "League", icon: "⚙️" }] : [];
+  const allTabs = [...mainTabs, ...admTabs];
 
   return (
     <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "'DM Sans', system-ui, sans-serif", color: C.text }}>
+      {/* Header */}
       <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ width: 36, height: 36, background: `linear-gradient(135deg, ${C.accent}, #f59e0b)`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, color: "#fff" }}>T</div>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 700 }}>TrackBlender</div>
-            <div style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>{data.members.length} members · {trackNames.length} tracks</div>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>{config?.name || "TrackBlender"}</div>
+            <div style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>{memberNames.length} members · {trackNames.length} tracks</div>
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>{saveStatus}</span>
-          <button onClick={() => { const next = !adminMode; setAdminMode(next); if (!next && tab === "trackeditor") setTab("grid"); }}
-            style={{ padding: "6px 12px", fontSize: 11, fontWeight: 600, fontFamily: "monospace", background: adminMode ? C.adminBg : "transparent", color: adminMode ? C.admin : C.textDim, border: `1px solid ${adminMode ? C.admin : C.border}`, borderRadius: 5, cursor: "pointer" }}>
-            {adminMode ? "🔓 ADMIN" : "🔒 Admin"}
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 12, color: C.textMuted }}>{myMember?.displayName}</span>
+            {isAdmin && <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, fontWeight: 700, fontFamily: "monospace", background: C.adminBg, color: C.admin }}>ADMIN</span>}
+            <button onClick={signOut} style={{ ...mbtn, color: C.textMuted, fontSize: 11 }}>Sign Out</button>
+          </div>
         </div>
       </div>
 
+      {/* Tabs */}
       <div style={{ display: "flex", gap: 2, padding: "12px 24px 0", borderBottom: `1px solid ${C.border}`, background: C.surface, flexWrap: "wrap" }}>
         {allTabs.map(t => {
-          const isA = t.id === "trackeditor"; const on = tab === t.id;
+          const isA = admTabs.some(a => a.id === t.id); const on = tab === t.id;
           return <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "10px 16px", fontSize: 13, fontWeight: on ? 600 : 400, color: on ? (isA ? C.admin : C.accent) : C.textMuted, background: on ? (isA ? C.adminBg : C.accentGlow) : "transparent", border: "none", borderBottom: on ? `2px solid ${isA ? C.admin : C.accent}` : "2px solid transparent", cursor: "pointer", borderRadius: "8px 8px 0 0", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6 }}><span>{t.icon}</span> {t.label}</button>;
         })}
       </div>
 
       <div style={{ padding: "20px 24px" }}>
-        {tab === "grid" && <Grid data={data} save={saveData} names={trackNames} map={trackMap} />}
-        {tab === "schedule" && <Schedule data={data} save={saveData} names={trackNames} map={trackMap} />}
-        {tab === "buy" && <BuyRecs data={data} save={saveData} names={trackNames} map={trackMap} />}
+        {tab === "grid" && <Grid data={data} save={save} names={trackNames} map={trackMap} currentUser={myMember?.displayName} isAdmin={isAdmin} />}
+        {tab === "schedule" && <Schedule data={data} save={save} names={trackNames} map={trackMap} isAdmin={isAdmin} />}
+        {tab === "buy" && <BuyRecs data={data} save={save} names={trackNames} map={trackMap} />}
         {tab === "stats" && <Stats data={data} names={trackNames} map={trackMap} />}
-        {tab === "trackeditor" && <Editor tracks={tracks} save={saveTracks} />}
+        {tab === "trackeditor" && isAdmin && <Editor tracks={tracks} save={saveTracksFn} />}
+        {tab === "leagueadmin" && isAdmin && <LeagueAdmin config={config} members={members} nameByUid={nameByUid} />}
       </div>
     </div>
   );
 }
 
+// ─── Sign In Screen ───
+function SignInScreen() {
+  const [error, setError] = useState(null);
+  const doSignIn = async () => {
+    try { await signIn(); } catch (e) { setError(e.message); }
+  };
+  return (
+    <div style={{ background: C.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ textAlign: "center", maxWidth: 400 }}>
+        <div style={{ width: 64, height: 64, background: `linear-gradient(135deg, ${C.accent}, #f59e0b)`, borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, fontWeight: 800, color: "#fff", margin: "0 auto 20px" }}>T</div>
+        <h1 style={{ fontSize: 24, fontWeight: 700, color: C.text, marginBottom: 8 }}>TrackBlender</h1>
+        <p style={{ fontSize: 14, color: C.textMuted, marginBottom: 30 }}>iRacing league track ownership manager</p>
+        <button onClick={doSignIn} style={{ ...btnP, padding: "12px 32px", fontSize: 15, display: "flex", alignItems: "center", gap: 10, margin: "0 auto" }}>
+          <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+          Sign in with Google
+        </button>
+        {error && <p style={{ color: C.danger, fontSize: 12, marginTop: 12 }}>{error}</p>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Create League Screen (first-run) ───
+function CreateLeagueScreen({ user, onCreated }) {
+  const [name, setName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const doCreate = async () => {
+    const n = name.trim(); if (!n) return;
+    setCreating(true);
+    try {
+      await createLeague(n, user.uid);
+      // Also create this user as the first member
+      await setMember(user.uid, { displayName: user.displayName || user.email, ownership: {}, joinedAt: new Date().toISOString() });
+      // Seed default tracks
+      await setTracks(DEFAULT_TRACKS);
+      onCreated({ name: n, adminUids: [user.uid] });
+    } catch (e) { console.error(e); }
+    setCreating(false);
+  };
+  return (
+    <div style={{ background: C.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ textAlign: "center", maxWidth: 400 }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>🏁</div>
+        <h2 style={{ fontSize: 20, fontWeight: 700, color: C.text, marginBottom: 8 }}>Create Your League</h2>
+        <p style={{ fontSize: 13, color: C.textMuted, marginBottom: 24 }}>You're the first one here! Name your league to get started. You'll be the admin.</p>
+        <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === "Enter" && doCreate()}
+          placeholder="League name..." style={{ ...inp, width: "100%", marginBottom: 12, textAlign: "center", fontSize: 16, boxSizing: "border-box" }} autoFocus />
+        <button onClick={doCreate} disabled={creating} style={{ ...btnP, padding: "12px 32px", fontSize: 15, opacity: creating ? 0.5 : 1 }}>
+          {creating ? "Creating..." : "Create League"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Claim Screen (authed user, no member doc) ───
+function ClaimScreen({ user, members, config }) {
+  const [driverName, setDriverName] = useState(user.displayName || "");
+  const [claiming, setClaiming] = useState(false);
+  const doClaim = async () => {
+    const n = driverName.trim(); if (!n) return;
+    setClaiming(true);
+    try {
+      await setMember(user.uid, { displayName: n, ownership: {}, joinedAt: new Date().toISOString() });
+    } catch (e) { console.error(e); }
+    setClaiming(false);
+  };
+  return (
+    <div style={{ background: C.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ textAlign: "center", maxWidth: 420 }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>👋</div>
+        <h2 style={{ fontSize: 20, fontWeight: 700, color: C.text, marginBottom: 8 }}>Welcome to {config?.name || "TrackBlender"}</h2>
+        <p style={{ fontSize: 13, color: C.textMuted, marginBottom: 24 }}>Pick your driver name. This is what other league members will see.</p>
+        <input value={driverName} onChange={e => setDriverName(e.target.value)} onKeyDown={e => e.key === "Enter" && doClaim()}
+          placeholder="Driver name..." style={{ ...inp, width: "100%", marginBottom: 12, textAlign: "center", fontSize: 16, boxSizing: "border-box" }} autoFocus />
+        {Object.keys(members).length > 0 && (
+          <p style={{ fontSize: 11, color: C.textDim, marginBottom: 12 }}>
+            Current members: {Object.values(members).map(m => m.displayName).join(", ")}
+          </p>
+        )}
+        <button onClick={doClaim} disabled={claiming} style={{ ...btnP, padding: "12px 32px", fontSize: 15, opacity: claiming ? 0.5 : 1 }}>
+          {claiming ? "Joining..." : "Join League"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function FullScreen({ children }) {
+  return <div style={{ background: C.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontFamily: "monospace" }}><div>{children}</div></div>;
+}
+
 // ─── Ownership Grid ───
-function Grid({ data, save, names, map }) {
-  const [newMem, setNewMem] = useState("");
+function Grid({ data, save, names, map, currentUser, isAdmin }) {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [hideEmpty, setHideEmpty] = useState(false);
@@ -156,9 +325,13 @@ function Grid({ data, save, names, map }) {
     return t;
   }, [filter, search, hideEmpty, hideFree, data.members, getS, names, map]);
 
-  const addMem = () => { const n = newMem.trim(); if (!n || data.members.includes(n)) return; save({ ...data, members: [...data.members, n] }); setNewMem(""); };
-  const remMem = (n) => { if (!confirm(`Remove ${n}?`)) return; const o = { ...data.ownership }; delete o[n]; save({ ...data, members: data.members.filter(m => m !== n), ownership: o }); };
-  const toggle = (m, t) => { const cur = getS(m, t); const next = cur === "unowned" ? "owned" : cur === "owned" ? "buy" : "unowned"; save({ ...data, ownership: { ...data.ownership, [m]: { ...(data.ownership[m] || {}), [t]: next } } }); };
+  const toggle = (m, t) => {
+    // Members can only edit their own row, admins can edit anyone
+    if (m !== currentUser && !isAdmin) return;
+    const cur = getS(m, t);
+    const next = cur === "unowned" ? "owned" : cur === "owned" ? "buy" : "unowned";
+    save({ ...data, ownership: { ...data.ownership, [m]: { ...(data.ownership[m] || {}), [t]: next } } });
+  };
   const ownCount = useCallback((t) => data.members.filter(m => getS(m, t) === "owned").length, [data.members, getS]);
 
   const hasBuys = useMemo(() => data.members.some(m => Object.values(data.ownership[m] || {}).some(v => v === "buy")), [data]);
@@ -175,26 +348,25 @@ function Grid({ data, save, names, map }) {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <input value={newMem} onChange={e => setNewMem(e.target.value)} onKeyDown={e => e.key === "Enter" && addMem()} placeholder="Add member..." style={inp} />
-        <button onClick={addMem} style={btnP}>+ Add</button>
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 11, color: C.textDim, fontFamily: "monospace" }}>click: unowned → owned → buy → unowned</span>
-        {hasBuys && <button onClick={clearBuys} style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, background: C.buyBg, color: C.buy, border: `1px solid ${C.buy}`, borderRadius: 5, cursor: "pointer", fontFamily: "inherit" }}>Clear All Buys</button>}
-      </div>
       <div style={{ marginBottom: 14, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search tracks..." style={{ ...inp, width: 200 }} />
         {Object.entries(CAT_LABELS).map(([k, v]) => <button key={k} onClick={() => setFilter(k)} style={pill(filter === k)}>{v}</button>)}
         <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: C.textMuted, cursor: "pointer" }}><input type="checkbox" checked={hideEmpty} onChange={e => setHideEmpty(e.target.checked)} /> Hide empty</label>
         <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: C.free, cursor: "pointer" }}><input type="checkbox" checked={hideFree} onChange={e => setHideFree(e.target.checked)} /> Hide free</label>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 11, color: C.textDim, fontFamily: "monospace" }}>{isAdmin ? "admin: edit any row" : "click your column to edit"}</span>
+        {hasBuys && isAdmin && <button onClick={clearBuys} style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, background: C.buyBg, color: C.buy, border: `1px solid ${C.buy}`, borderRadius: 5, cursor: "pointer", fontFamily: "inherit" }}>Clear All Buys</button>}
       </div>
-      {data.members.length === 0 ? <Empty icon="🏁" title="No members yet" sub="Add league members above" /> : (
+      {data.members.length === 0 ? <Empty icon="🏁" title="No members yet" sub="Invite people to join your league" /> : (
         <div style={{ overflowX: "auto", borderRadius: 8, border: `1px solid ${C.border}` }}>
           <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
             <thead><tr style={{ background: C.surface }}>
               <th style={{ ...thS, minWidth: 280, textAlign: "left", position: "sticky", left: 0, background: C.surface, zIndex: 10 }}>Track</th>
               <th style={{ ...thS, width: 30, color: C.textDim, fontSize: 10 }}>#</th>
-              {data.members.map(m => <th key={m} style={{ ...thS, minWidth: 70 }}><div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}><span style={{ fontSize: 11, fontWeight: 600, maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m}</span><button onClick={() => remMem(m)} style={{ fontSize: 9, color: C.textDim, background: "none", border: "none", cursor: "pointer" }}>remove</button></div></th>)}
+              {data.members.map(m => <th key={m} style={{ ...thS, minWidth: 70, color: m === currentUser ? C.accent : C.textMuted }}>
+                <span style={{ fontSize: 11, fontWeight: 600, maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>{m}</span>
+                {m === currentUser && <span style={{ fontSize: 8, color: C.accent }}>you</span>}
+              </th>)}
             </tr></thead>
             <tbody>
               {filtered.map((track, i) => {
@@ -211,7 +383,8 @@ function Grid({ data, save, names, map }) {
                     {data.members.map(m => {
                       if (isFree) return <td key={m} style={{ ...tdS, textAlign: "center" }}><span style={{ color: C.free, fontSize: 10 }}>✓</span></td>;
                       const s = getS(m, track);
-                      return <td key={m} onClick={() => toggle(m, track)} style={{ ...tdS, textAlign: "center", cursor: "pointer", userSelect: "none", background: s === "owned" ? C.ownedBg : s === "buy" ? C.buyBg : "transparent" }}>
+                      const canEdit = m === currentUser || isAdmin;
+                      return <td key={m} onClick={() => canEdit && toggle(m, track)} style={{ ...tdS, textAlign: "center", cursor: canEdit ? "pointer" : "default", userSelect: "none", background: s === "owned" ? C.ownedBg : s === "buy" ? C.buyBg : "transparent", opacity: canEdit ? 1 : 0.8 }}>
                         {s === "owned" ? <span style={{ color: C.owned, fontWeight: 700, fontSize: 14 }}>✓</span> : s === "buy" ? <span style={{ color: C.buy, fontWeight: 700, fontSize: 11 }}>BUY</span> : <span style={{ color: C.textDim }}>·</span>}
                       </td>;
                     })}
@@ -228,7 +401,7 @@ function Grid({ data, save, names, map }) {
 }
 
 // ─── Schedule Builder ───
-function Schedule({ data, save, names, map }) {
+function Schedule({ data, save, names, map, isAdmin }) {
   const [minOwn, setMinOwn] = useState(Math.max(1, data.members.length));
   const [catF, setCatF] = useState("all");
   const getS = useCallback((m, t) => (data.ownership[m] || {})[t] || "unowned", [data.ownership]);
@@ -243,15 +416,16 @@ function Schedule({ data, save, names, map }) {
   }, [data, minOwn, catF, names, map, effOwn, buyN]);
 
   const sched = data.schedule || [];
-  const add = (t) => { if (!sched.includes(t)) save({ ...data, schedule: [...sched, t] }); };
-  const rem = (i) => { const s = [...sched]; s.splice(i, 1); save({ ...data, schedule: s }); };
-  const move = (i, d) => { const s = [...sched]; const j = i + d; if (j < 0 || j >= s.length) return; [s[i], s[j]] = [s[j], s[i]]; save({ ...data, schedule: s }); };
+  const add = (t) => { if (!isAdmin) return; if (!sched.includes(t)) save({ ...data, schedule: [...sched, t] }); };
+  const rem = (i) => { if (!isAdmin) return; const s = [...sched]; s.splice(i, 1); save({ ...data, schedule: s }); };
+  const move = (i, d) => { if (!isAdmin) return; const s = [...sched]; const j = i + d; if (j < 0 || j >= s.length) return; [s[i], s[j]] = [s[j], s[i]]; save({ ...data, schedule: s }); };
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, alignItems: "start" }}>
       <div>
         <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Season ({sched.length} rounds)</h3>
-        {sched.length === 0 ? <div style={{ padding: 40, textAlign: "center", color: C.textMuted, background: C.surface, borderRadius: 8, border: `1px dashed ${C.border}` }}>Add tracks →</div> : (
+        {!isAdmin && sched.length > 0 && <p style={{ fontSize: 11, color: C.textDim, marginBottom: 8 }}>Only admins can edit the schedule</p>}
+        {sched.length === 0 ? <div style={{ padding: 40, textAlign: "center", color: C.textMuted, background: C.surface, borderRadius: 8, border: `1px dashed ${C.border}` }}>{isAdmin ? "Add tracks →" : "No schedule yet"}</div> : (
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             {sched.map((track, i) => {
               const ow = effOwn(track); const tr = map[track];
@@ -260,9 +434,7 @@ function Schedule({ data, save, names, map }) {
                 <Badges t={tr} />
                 <span style={{ flex: 1, fontSize: 12, fontWeight: 500 }}>{track}</span>
                 <span style={{ fontSize: 10, fontFamily: "monospace", color: ow === data.members.length ? C.owned : C.buy }}>{ow}/{data.members.length}</span>
-                <button onClick={() => move(i, -1)} style={mbtn}>↑</button>
-                <button onClick={() => move(i, 1)} style={mbtn}>↓</button>
-                <button onClick={() => rem(i)} style={{ ...mbtn, color: C.danger }}>×</button>
+                {isAdmin && <><button onClick={() => move(i, -1)} style={mbtn}>↑</button><button onClick={() => move(i, 1)} style={mbtn}>↓</button><button onClick={() => rem(i)} style={{ ...mbtn, color: C.danger }}>×</button></>}
               </div>;
             })}
           </div>
@@ -297,7 +469,7 @@ function Schedule({ data, save, names, map }) {
         <div style={{ maxHeight: 500, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 }}>
           {eligible.map(t => {
             const inS = sched.includes(t.name);
-            return <div key={t.name} onClick={() => !inS && add(t.name)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", background: inS ? "rgba(34,197,94,0.06)" : C.surface, borderRadius: 5, border: `1px solid ${inS ? "rgba(34,197,94,0.2)" : C.border}`, cursor: inS ? "default" : "pointer", opacity: inS ? 0.5 : 1 }}>
+            return <div key={t.name} onClick={() => isAdmin && !inS && add(t.name)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", background: inS ? "rgba(34,197,94,0.06)" : C.surface, borderRadius: 5, border: `1px solid ${inS ? "rgba(34,197,94,0.2)" : C.border}`, cursor: isAdmin && !inS ? "pointer" : "default", opacity: inS ? 0.5 : 1 }}>
               <div style={{ width: 28, height: 28, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "monospace", fontSize: 11, fontWeight: 800, background: t.owners === data.members.length ? C.ownedBg : C.surface, color: t.owners === data.members.length ? C.owned : C.text, border: `1px solid ${t.owners === data.members.length ? "rgba(34,197,94,0.3)" : C.border}` }}>{t.owners}</div>
               <div style={{ flex: 1 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 500 }}>{t.name} <CfgBadge n={t.track?.configs} /></div>
@@ -315,53 +487,34 @@ function Schedule({ data, save, names, map }) {
 
 // ─── Purchase Optimizer Solver ───
 function solvePurchases(members, ownership, paidTracks, maxBuys) {
-  // For each paid track, figure out who's missing it
-  const missing = {}; // track -> [members who don't own it]
+  const missing = {};
   for (const t of paidTracks) {
     const m = members.filter(m => (ownership[m] || {})[t] !== "owned");
     if (m.length > 0 && m.length <= members.length) missing[t] = m;
   }
-
-  // Budget remaining per member
-  const budget = {};
-  members.forEach(m => { budget[m] = maxBuys; });
-
-  // Greedy: repeatedly pick the track closest to universal (fewest missing)
-  // that can be completed within remaining budgets
-  const assignments = []; // { member, track }
+  const budget = {}; members.forEach(m => { budget[m] = maxBuys; });
+  const assignments = [];
   let improved = true;
-
   while (improved) {
     improved = false;
-    // Sort candidates by fewest missing (easiest to complete)
     const candidates = Object.entries(missing)
-      .map(([track, missingMembers]) => ({ track, missing: missingMembers }))
-      .filter(c => c.missing.every(m => budget[m] > 0)) // all missing members have budget
-      .sort((a, b) => a.missing.length - b.missing.length); // fewest missing first
-
+      .map(([track, mm]) => ({ track, missing: mm }))
+      .filter(c => c.missing.every(m => budget[m] > 0))
+      .sort((a, b) => a.missing.length - b.missing.length);
     if (candidates.length > 0) {
       const best = candidates[0];
-      // Assign buys
-      for (const m of best.missing) {
-        assignments.push({ member: m, track: best.track });
-        budget[m]--;
-      }
+      for (const m of best.missing) { assignments.push({ member: m, track: best.track }); budget[m]--; }
       delete missing[best.track];
       improved = true;
     }
   }
-
-  // Count how many tracks were promoted to universal
-  const promotedTracks = [...new Set(assignments.map(a => a.track))];
-
-  return { assignments, promotedTracks, budget };
+  return { assignments, promotedTracks: [...new Set(assignments.map(a => a.track))], budget };
 }
 
 // ─── Buy Recs ───
 function BuyRecs({ data, save, names, map }) {
   const [maxBuys, setMaxBuys] = useState(2);
   const [solverResult, setSolverResult] = useState(null);
-
   const getS = useCallback((m, t) => (data.ownership[m] || {})[t] || "unowned", [data.ownership]);
   const paidNames = useMemo(() => names.filter(t => !map[t]?.free), [names, map]);
 
@@ -376,53 +529,27 @@ function BuyRecs({ data, save, names, map }) {
     });
   }, [data, paidNames, getS, map]);
 
-  const schedRecs = useMemo(() => {
-    const s = data.schedule || [];
-    if (!s.length || !data.members.length) return null;
-    return data.members.map(m => ({ member: m, missing: s.filter(t => !map[t]?.free && getS(m, t) === "unowned"), buying: s.filter(t => getS(m, t) === "buy") })).sort((a, b) => b.missing.length - a.missing.length);
-  }, [data, map, getS]);
-
   const hasBuys = useMemo(() => data.members.some(m => Object.values(data.ownership[m] || {}).some(v => v === "buy")), [data]);
 
   const runSolver = () => {
     const result = solvePurchases(data.members, data.ownership, paidNames, maxBuys);
     setSolverResult(result);
-
-    // Apply buy states to ownership
     const newOwnership = { ...data.ownership };
-    // First clear existing buys
-    for (const m of data.members) {
-      const mo = { ...(newOwnership[m] || {}) };
-      for (const [t, v] of Object.entries(mo)) { if (v === "buy") mo[t] = "unowned"; }
-      newOwnership[m] = mo;
-    }
-    // Then apply solver assignments
-    for (const { member, track } of result.assignments) {
-      newOwnership[member] = { ...(newOwnership[member] || {}), [track]: "buy" };
-    }
+    for (const m of data.members) { const mo = { ...(newOwnership[m] || {}) }; for (const [t, v] of Object.entries(mo)) { if (v === "buy") mo[t] = "unowned"; } newOwnership[m] = mo; }
+    for (const { member, track } of result.assignments) { newOwnership[member] = { ...(newOwnership[member] || {}), [track]: "buy" }; }
     save({ ...data, ownership: newOwnership });
   };
 
   const clearBuys = () => {
     const newOwnership = {};
-    for (const m of data.members) {
-      const mo = data.ownership[m] || {};
-      const cleaned = {};
-      for (const [t, v] of Object.entries(mo)) { cleaned[t] = v === "buy" ? "unowned" : v; }
-      newOwnership[m] = cleaned;
-    }
+    for (const m of data.members) { const mo = data.ownership[m] || {}; const cleaned = {}; for (const [t, v] of Object.entries(mo)) { cleaned[t] = v === "buy" ? "unowned" : v; } newOwnership[m] = cleaned; }
     save({ ...data, ownership: newOwnership });
     setSolverResult(null);
   };
 
   if (data.members.length < 2) return <Empty icon="🛒" title="Need 2+ members" sub="Add members in the Grid" />;
 
-  // Group solver results by member for display
-  const solverByMember = solverResult ? data.members.map(m => ({
-    member: m,
-    buys: solverResult.assignments.filter(a => a.member === m).map(a => a.track),
-    remaining: solverResult.budget[m],
-  })) : null;
+  const solverByMember = solverResult ? data.members.map(m => ({ member: m, buys: solverResult.assignments.filter(a => a.member === m).map(a => a.track), remaining: solverResult.budget[m] })) : null;
 
   return (
     <div>
@@ -431,7 +558,7 @@ function BuyRecs({ data, save, names, map }) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <div>
             <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 2 }}>Optimize Purchases</h3>
-            <p style={{ fontSize: 12, color: C.textMuted, margin: 0 }}>Find the maximum tracks promotable to universal within a per-member buy limit</p>
+            <p style={{ fontSize: 12, color: C.textMuted, margin: 0 }}>Maximize tracks promotable to universal within a per-member buy limit</p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {hasBuys && <button onClick={clearBuys} style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, background: C.buyBg, color: C.buy, border: `1px solid ${C.buy}`, borderRadius: 6, cursor: "pointer", fontFamily: "inherit" }}>Clear All Buys</button>}
@@ -445,41 +572,35 @@ function BuyRecs({ data, save, names, map }) {
             <span style={{ fontFamily: "monospace", color: C.accent, fontWeight: 800, fontSize: 16, minWidth: 20, textAlign: "center" }}>{maxBuys}</span>
           </label>
         </div>
-
         {solverResult && (
           <div>
-            {/* Summary */}
             <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
               <div style={{ padding: "10px 16px", background: C.ownedBg, borderRadius: 6, border: "1px solid rgba(34,197,94,0.2)" }}>
                 <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "monospace", color: C.owned }}>{solverResult.promotedTracks.length}</div>
-                <div style={{ fontSize: 10, color: C.textMuted }}>tracks promoted to universal</div>
+                <div style={{ fontSize: 10, color: C.textMuted }}>tracks → universal</div>
               </div>
               <div style={{ padding: "10px 16px", background: C.buyBg, borderRadius: 6, border: "1px solid rgba(245,158,11,0.2)" }}>
                 <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "monospace", color: C.buy }}>{solverResult.assignments.length}</div>
-                <div style={{ fontSize: 10, color: C.textMuted }}>total purchases needed</div>
+                <div style={{ fontSize: 10, color: C.textMuted }}>total purchases</div>
               </div>
             </div>
-
-            {/* Promoted tracks */}
             {solverResult.promotedTracks.length > 0 && (
               <div style={{ marginBottom: 16 }}>
-                <h4 style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, marginBottom: 6 }}>Newly Universal Tracks</h4>
+                <h4 style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, marginBottom: 6 }}>Newly Universal</h4>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {solverResult.promotedTracks.map(t => <span key={t} style={{ padding: "5px 10px", background: C.ownedBg, border: "1px solid rgba(34,197,94,0.2)", borderRadius: 5, fontSize: 11, color: C.owned, fontWeight: 500 }}>{t}</span>)}
                 </div>
               </div>
             )}
-
-            {/* Assignments by member */}
-            <h4 style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, marginBottom: 8 }}>Purchase Assignments</h4>
+            <h4 style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, marginBottom: 8 }}>Assignments</h4>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 10 }}>
               {solverByMember.map(r => (
                 <div key={r.member} style={{ padding: 12, background: C.bg, borderRadius: 6, border: `1px solid ${C.border}` }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                     <span style={{ fontWeight: 700, fontSize: 13 }}>{r.member}</span>
-                    <span style={{ fontSize: 10, fontFamily: "monospace", color: r.buys.length === 0 ? C.textDim : C.buy }}>{r.buys.length}/{maxBuys} buys</span>
+                    <span style={{ fontSize: 10, fontFamily: "monospace", color: r.buys.length === 0 ? C.textDim : C.buy }}>{r.buys.length}/{maxBuys}</span>
                   </div>
-                  {r.buys.length === 0 ? <div style={{ fontSize: 11, color: C.textDim }}>No purchases needed</div>
+                  {r.buys.length === 0 ? <div style={{ fontSize: 11, color: C.textDim }}>No purchases</div>
                     : r.buys.map(t => <div key={t} style={{ fontSize: 11, color: C.buy, padding: "2px 0" }}>🟡 {t}</div>)}
                 </div>
               ))}
@@ -488,25 +609,7 @@ function BuyRecs({ data, save, names, map }) {
         )}
       </div>
 
-      {/* Schedule-based recs */}
-      {schedRecs && schedRecs.some(r => r.missing.length > 0) && (
-        <div style={{ marginBottom: 30 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>For Current Schedule</h3>
-          <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 14 }}>What each member needs for every round</p>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
-            {schedRecs.map(r => <div key={r.member} style={{ background: C.surface, borderRadius: 8, border: `1px solid ${C.border}`, padding: 16 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-                <span style={{ fontWeight: 700, fontSize: 13 }}>{r.member}</span>
-                {r.missing.length === 0 ? <span style={{ fontSize: 11, color: C.owned, fontWeight: 600 }}>✓ All set</span> : <span style={{ fontSize: 11, fontFamily: "monospace", color: C.danger }}>{r.missing.length} missing</span>}
-              </div>
-              {r.buying.map(t => <div key={t} style={{ fontSize: 11, color: C.buy, padding: "2px 0" }}>🟡 {t}</div>)}
-              {r.missing.map(t => <div key={t} style={{ fontSize: 11, color: C.danger, padding: "2px 0" }}>✗ {t}</div>)}
-            </div>)}
-          </div>
-        </div>
-      )}
-
-      {/* General best-value recs */}
+      {/* General recs */}
       <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>Best Value Purchases</h3>
       <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 14 }}>Paid tracks where buying gets closest to full coverage</p>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 12 }}>
@@ -659,6 +762,69 @@ function Editor({ tracks, save }) {
         ))}
       </div>
       <div style={{ marginTop: 10, fontSize: 11, color: C.textDim }}>{sorted.length} of {tracks.length}</div>
+    </div>
+  );
+}
+
+// ─── League Admin Panel ───
+function LeagueAdmin({ config, members, nameByUid }) {
+  const [newAdmin, setNewAdmin] = useState("");
+  const adminUids = config?.adminUids || [];
+
+  const addAdmin = async () => {
+    // Find UID by display name
+    const uid = Object.entries(nameByUid).find(([u, n]) => n.toLowerCase() === newAdmin.trim().toLowerCase())?.[0];
+    if (!uid || adminUids.includes(uid)) return;
+    await setConfig({ adminUids: [...adminUids, uid] });
+    setNewAdmin("");
+  };
+
+  const removeAdmin = async (uid) => {
+    if (adminUids.length <= 1) return; // must keep at least one
+    if (!confirm(`Remove admin: ${nameByUid[uid]}?`)) return;
+    await setConfig({ adminUids: adminUids.filter(u => u !== uid) });
+  };
+
+  const removeMemberFn = async (uid) => {
+    if (adminUids.includes(uid)) { alert("Remove admin status first"); return; }
+    if (!confirm(`Remove member ${members[uid]?.displayName}? Their data will be deleted.`)) return;
+    await deleteMember(uid);
+  };
+
+  return (
+    <div>
+      <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 4, color: C.admin }}>League Administration</h3>
+      <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 20 }}>{config?.name}</p>
+
+      {/* Admins */}
+      <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Admins</h4>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 16 }}>
+        {adminUids.map(uid => (
+          <div key={uid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: C.adminBg, borderRadius: 6, border: `1px solid rgba(167,139,250,0.2)` }}>
+            <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, fontWeight: 700, fontFamily: "monospace", background: C.adminBg, color: C.admin }}>ADMIN</span>
+            <span style={{ flex: 1, fontSize: 13 }}>{nameByUid[uid] || uid}</span>
+            {adminUids.length > 1 && <button onClick={() => removeAdmin(uid)} style={{ ...mbtn, color: C.danger }}>remove admin</button>}
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 30 }}>
+        <input value={newAdmin} onChange={e => setNewAdmin(e.target.value)} onKeyDown={e => e.key === "Enter" && addAdmin()}
+          placeholder="Member name to make admin..." style={{ ...inp, flex: 1 }} />
+        <button onClick={addAdmin} style={btnP}>+ Add Admin</button>
+      </div>
+
+      {/* Members */}
+      <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Members ({Object.keys(members).length})</h4>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {Object.entries(members).map(([uid, m]) => (
+          <div key={uid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: C.surface, borderRadius: 6, border: `1px solid ${C.border}` }}>
+            <span style={{ flex: 1, fontSize: 13 }}>{m.displayName}</span>
+            <span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>{Object.values(m.ownership || {}).filter(v => v === "owned").length} tracks</span>
+            {adminUids.includes(uid) && <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, fontWeight: 700, fontFamily: "monospace", background: C.adminBg, color: C.admin }}>ADMIN</span>}
+            {!adminUids.includes(uid) && <button onClick={() => removeMemberFn(uid)} style={{ ...mbtn, color: C.danger }}>remove</button>}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
