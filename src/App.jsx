@@ -224,11 +224,9 @@ export default function App() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>{saveStatus}</span>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 12, color: C.textMuted }}>{myMember?.displayName}</span>
-            {isAdmin && <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, fontWeight: 700, fontFamily: "monospace", background: C.adminBg, color: C.admin }}>ADMIN</span>}
-            <button onClick={signOut} style={{ ...mbtn, color: C.textMuted, fontSize: 11 }}>Sign Out</button>
-          </div>
+          <UserName user={user} myMember={myMember} persist={persist} />
+          {isAdmin && <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, fontWeight: 700, fontFamily: "monospace", background: C.adminBg, color: C.admin }}>ADMIN</span>}
+          <button onClick={signOut} style={{ ...mbtn, color: C.textMuted, fontSize: 11 }}>Sign Out</button>
         </div>
       </div>
 
@@ -277,15 +275,15 @@ function SignInScreen() {
 // ─── Create League Screen (first-run) ───
 function CreateLeagueScreen({ user, onCreated }) {
   const [name, setName] = useState("");
+  const [driverName, setDriverName] = useState(user.displayName || "");
   const [creating, setCreating] = useState(false);
   const doCreate = async () => {
-    const n = name.trim(); if (!n) return;
+    const n = name.trim(); const dn = driverName.trim();
+    if (!n || !dn) return;
     setCreating(true);
     try {
       await createLeague(n, user.uid);
-      // Also create this user as the first member
-      await setMember(user.uid, { displayName: user.displayName || user.email, ownership: {}, joinedAt: new Date().toISOString() });
-      // Seed default tracks
+      await setMember(user.uid, { displayName: dn, ownership: {}, joinedAt: new Date().toISOString() });
       await setTracks(DEFAULT_TRACKS);
       onCreated({ name: n, adminUids: [user.uid] });
     } catch (e) { console.error(e); }
@@ -296,9 +294,11 @@ function CreateLeagueScreen({ user, onCreated }) {
       <div style={{ textAlign: "center", maxWidth: 400 }}>
         <div style={{ fontSize: 48, marginBottom: 16 }}>🏁</div>
         <h2 style={{ fontSize: 20, fontWeight: 700, color: C.text, marginBottom: 8 }}>Create Your League</h2>
-        <p style={{ fontSize: 13, color: C.textMuted, marginBottom: 24 }}>You're the first one here! Name your league to get started. You'll be the admin.</p>
-        <input value={name} onChange={e => setName(e.target.value)} onKeyDown={e => e.key === "Enter" && doCreate()}
+        <p style={{ fontSize: 13, color: C.textMuted, marginBottom: 24 }}>You're the first one here! Name your league and pick your driver name.</p>
+        <input value={name} onChange={e => setName(e.target.value)}
           placeholder="League name..." style={{ ...inp, width: "100%", marginBottom: 12, textAlign: "center", fontSize: 16, boxSizing: "border-box" }} autoFocus />
+        <input value={driverName} onChange={e => setDriverName(e.target.value)} onKeyDown={e => e.key === "Enter" && doCreate()}
+          placeholder="Your driver name..." style={{ ...inp, width: "100%", marginBottom: 12, textAlign: "center", fontSize: 16, boxSizing: "border-box" }} />
         <button onClick={doCreate} disabled={creating} style={{ ...btnP, padding: "12px 32px", fontSize: 15, opacity: creating ? 0.5 : 1 }}>
           {creating ? "Creating..." : "Create League"}
         </button>
@@ -342,6 +342,40 @@ function ClaimScreen({ user, members, config }) {
 
 function FullScreen({ children }) {
   return <div style={{ background: C.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: C.textMuted, fontFamily: "monospace" }}><div>{children}</div></div>;
+}
+
+// ─── Inline rename for current user ───
+function UserName({ user, myMember, persist }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState("");
+
+  const startEdit = () => { setName(myMember?.displayName || ""); setEditing(true); };
+  const cancel = () => setEditing(false);
+  const save = () => {
+    const n = name.trim();
+    if (!n || n === myMember?.displayName) { setEditing(false); return; }
+    persist(`member-${user.uid}`, () => setMember(user.uid, { displayName: n }), user.uid);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <input value={name} onChange={e => setName(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") cancel(); }}
+          style={{ ...inp, padding: "4px 8px", fontSize: 12, width: 120 }} autoFocus />
+        <button onClick={save} style={{ ...mbtn, color: C.owned, fontWeight: 700, fontSize: 11 }}>✓</button>
+        <button onClick={cancel} style={{ ...mbtn, fontSize: 11 }}>✗</button>
+      </div>
+    );
+  }
+
+  return (
+    <button onClick={startEdit} title="Click to change driver name"
+      style={{ background: "none", border: "none", color: C.textMuted, fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: "2px 4px", borderRadius: 3, borderBottom: `1px dashed ${C.textDim}` }}>
+      {myMember?.displayName}
+    </button>
+  );
 }
 
 // ─── Ownership Grid ───
