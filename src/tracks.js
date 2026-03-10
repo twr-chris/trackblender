@@ -112,7 +112,7 @@ const DEFAULT_TRACKS = [
   { name: "Richmond Raceway", cats: ["oval"], configs: null, free: false },
   { name: "Road America", cats: ["road"], configs: null, free: false },
   { name: "Rockingham Speedway", cats: ["oval"], configs: null, free: false },
-  { name: "Rudskogen Motorsenter", cats: ["road", "dirt-road"], configs: null, free: false },
+  { name: "Rudskogen Motorsenter", cats: ["road", "dirt-road"], configs: null, free: true },
   { name: "Sachsenring", cats: ["road"], configs: null, free: false },
   { name: "Sandown International Motor Raceway", cats: ["road"], configs: null, free: false },
   { name: "Sebring International Raceway", cats: ["road"], configs: null, free: false },
