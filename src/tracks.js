@@ -17,7 +17,7 @@ const DEFAULT_TRACKS = [
   { name: "Canadian Tire Motorsport Park", cats: ["road"], configs: null, free: false },
   { name: "Cedar Lake Speedway", cats: ["dirt-oval"], configs: null, free: false },
   { name: "Centripetal Circuit", cats: ["road"], configs: null, free: true },
-  { name: "Charlotte Motor Speedway", cats: ["oval", "road"], configs: null, free: false },
+  { name: "Charlotte Motor Speedway", cats: ["oval", "road"], configs: null, free: true },
   { name: "Chicago Street Course", cats: ["road"], configs: null, free: false },
   { name: "Chicagoland Speedway", cats: ["oval"], configs: null, free: false },
   { name: "Chili Bowl", cats: ["dirt-oval"], configs: null, free: false },
