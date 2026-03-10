@@ -85,9 +85,11 @@ export default function App() {
       unsubs.push(subscribeMembers(v => {
         // Merge inbound data, but preserve local state for UIDs with pending writes
         setMembersState(prev => {
+          // If nothing is pending, accept inbound wholesale
+          if (pendingWrites.current.size === 0) return v;
           const merged = { ...v };
           for (const uid of pendingWrites.current) {
-            if (prev[uid]) merged[uid] = prev[uid];
+            if (uid in prev) merged[uid] = prev[uid];
           }
           return merged;
         });
@@ -159,10 +161,17 @@ export default function App() {
   const saveOwnership = useCallback((memberName, newOwnership) => {
     const uid = uidByName[memberName];
     if (!uid) return;
+    pendingWrites.current.add(uid);
     const updated = { ...members[uid], ownership: newOwnership };
     setMembersState(prev => ({ ...prev, [uid]: updated }));
     persist(`member-${uid}`, () => setMember(uid, { ownership: newOwnership }), uid);
   }, [members, uidByName, persist]);
+
+  const renameMember = useCallback((uid, newName) => {
+    pendingWrites.current.add(uid);
+    setMembersState(prev => ({ ...prev, [uid]: { ...prev[uid], displayName: newName } }));
+    persist(`member-${uid}`, () => setMember(uid, { displayName: newName }), uid);
+  }, [persist]);
 
   const saveScheduleFn = useCallback((rounds) => {
     setScheduleState(rounds);
@@ -224,7 +233,7 @@ export default function App() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>{saveStatus}</span>
-          <UserName user={user} myMember={myMember} persist={persist} />
+          <UserName user={user} myMember={myMember} renameMember={renameMember} />
           {isAdmin && <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, fontWeight: 700, fontFamily: "monospace", background: C.adminBg, color: C.admin }}>ADMIN</span>}
           <button onClick={signOut} style={{ ...mbtn, color: C.textMuted, fontSize: 11 }}>Sign Out</button>
         </div>
@@ -345,7 +354,7 @@ function FullScreen({ children }) {
 }
 
 // ─── Inline rename for current user ───
-function UserName({ user, myMember, persist }) {
+function UserName({ user, myMember, renameMember }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState("");
 
@@ -354,7 +363,7 @@ function UserName({ user, myMember, persist }) {
   const save = () => {
     const n = name.trim();
     if (!n || n === myMember?.displayName) { setEditing(false); return; }
-    persist(`member-${user.uid}`, () => setMember(user.uid, { displayName: n }), user.uid);
+    renameMember(user.uid, n);
     setEditing(false);
   };
 
