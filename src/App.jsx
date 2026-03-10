@@ -352,6 +352,13 @@ function Grid({ data, save, names, map, currentUser, isAdmin }) {
   const [hideFree, setHideFree] = useState(false);
 
   const getS = useCallback((m, t) => (data.ownership[m] || {})[t] || "unowned", [data.ownership]);
+
+  // Sort members: current user first, then alphabetical
+  const sortedMembers = useMemo(() => {
+    const others = data.members.filter(m => m !== currentUser).sort();
+    return currentUser && data.members.includes(currentUser) ? [currentUser, ...others] : others;
+  }, [data.members, currentUser]);
+
   const filtered = useMemo(() => {
     let t = names;
     if (filter !== "all") t = t.filter(n => map[n] && matchCat(map[n], filter));
@@ -399,7 +406,7 @@ function Grid({ data, save, names, map, currentUser, isAdmin }) {
             <thead><tr style={{ background: C.surface }}>
               <th style={{ ...thS, minWidth: 280, textAlign: "left", position: "sticky", left: 0, background: C.surface, zIndex: 10 }}>Track</th>
               <th style={{ ...thS, width: 30, color: C.textDim, fontSize: 10 }}>#</th>
-              {data.members.map(m => {
+              {sortedMembers.map(m => {
                 const isRacing = data.racing[m] !== false;
                 return <th key={m} style={{ ...thS, minWidth: 70, color: m === currentUser ? C.accent : isRacing ? C.textMuted : C.textDim, opacity: isRacing ? 1 : 0.5 }}>
                 <span style={{ fontSize: 11, fontWeight: 600, maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>{m}</span>
@@ -420,7 +427,7 @@ function Grid({ data, save, names, map, currentUser, isAdmin }) {
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}><Badges t={tr} /><span>{track}</span></div>
                     </td>
                     <td style={{ ...tdS, textAlign: "center", fontFamily: "monospace", fontWeight: 700, color: isFree ? C.free : count === 0 ? C.textDim : allOwn ? C.owned : C.text, fontSize: 11 }}>{isFree ? "—" : count}</td>
-                    {data.members.map(m => {
+                    {sortedMembers.map(m => {
                       const isRacing = data.racing[m] !== false;
                       if (isFree) return <td key={m} style={{ ...tdS, textAlign: "center", opacity: isRacing ? 1 : 0.4 }}><span style={{ color: C.free, fontSize: 10 }}>✓</span></td>;
                       const s = getS(m, track);
@@ -445,16 +452,18 @@ function Grid({ data, save, names, map, currentUser, isAdmin }) {
 function Schedule({ data, save, names, map, isAdmin }) {
   const [minOwn, setMinOwn] = useState(Math.max(1, data.racingMembers.length));
   const [catF, setCatF] = useState("all");
+  const [hideFree, setHideFree] = useState(true);
   const getS = useCallback((m, t) => (data.ownership[m] || {})[t] || "unowned", [data.ownership]);
   const effOwn = useCallback((t) => map[t]?.free ? data.racingMembers.length : data.racingMembers.filter(m => getS(m, t) === "owned").length, [map, data.racingMembers, getS]);
   const buyN = useCallback((t) => map[t]?.free ? 0 : data.racingMembers.filter(m => getS(m, t) === "buy").length, [map, data.racingMembers, getS]);
 
   const eligible = useMemo(() => {
     return names.filter(t => map[t] && matchCat(map[t], catF))
+      .filter(t => !hideFree || !map[t]?.free)
       .map(t => ({ name: t, owners: effOwn(t), buyers: buyN(t), track: map[t] }))
       .filter(t => t.owners >= minOwn)
       .sort((a, b) => b.owners - a.owners || (b.owners + b.buyers) - (a.owners + a.buyers));
-  }, [data, minOwn, catF, names, map, effOwn, buyN]);
+  }, [data, minOwn, catF, hideFree, names, map, effOwn, buyN]);
 
   const sched = data.schedule || [];
   const add = (t) => { if (!isAdmin) return; if (!sched.includes(t)) save({ ...data, schedule: [...sched, t] }); };
@@ -504,8 +513,11 @@ function Schedule({ data, save, names, map, isAdmin }) {
             <span style={{ fontFamily: "monospace", color: C.accent, fontWeight: 700 }}>{minOwn}</span>
           </label>
         </div>
-        <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
+        <div style={{ display: "flex", gap: 4, marginBottom: 10, alignItems: "center" }}>
           {Object.entries(CAT_LABELS).map(([k, v]) => <button key={k} onClick={() => setCatF(k)} style={{ ...pill(catF === k), fontSize: 10, padding: "4px 10px" }}>{v}</button>)}
+          <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: C.free, cursor: "pointer", marginLeft: 8 }}>
+            <input type="checkbox" checked={hideFree} onChange={e => setHideFree(e.target.checked)} /> Hide free
+          </label>
         </div>
         <div style={{ maxHeight: 500, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 }}>
           {eligible.map(t => {
