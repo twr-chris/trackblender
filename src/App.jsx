@@ -595,7 +595,7 @@ function Schedule({ data, save, names, map, isAdmin }) {
 }
 
 // ─── Purchase Optimizer Solver ───
-function solvePurchases(members, ownership, paidTracks, maxBuys) {
+function solvePurchases(members, ownership, paidTracks, maxBuys, forcedTracks = []) {
   const missing = {};
   for (const t of paidTracks) {
     const m = members.filter(m => (ownership[m] || {})[t] !== "owned");
@@ -603,6 +603,26 @@ function solvePurchases(members, ownership, paidTracks, maxBuys) {
   }
   const budget = {}; members.forEach(m => { budget[m] = maxBuys; });
   const assignments = [];
+  const conflicts = []; // forced tracks that couldn't be fully assigned
+
+  // Phase 1: process forced tracks first
+  for (const ft of forcedTracks) {
+    if (!missing[ft]) continue; // already universal or not in paid list
+    const cantAfford = missing[ft].filter(m => budget[m] <= 0);
+    if (cantAfford.length > 0) {
+      conflicts.push({ track: ft, members: cantAfford });
+    }
+    // Assign buys to members who can afford it
+    for (const m of missing[ft]) {
+      if (budget[m] > 0) {
+        assignments.push({ member: m, track: ft });
+        budget[m]--;
+      }
+    }
+    delete missing[ft];
+  }
+
+  // Phase 2: greedy optimization on remaining tracks
   let improved = true;
   while (improved) {
     improved = false;
@@ -617,15 +637,32 @@ function solvePurchases(members, ownership, paidTracks, maxBuys) {
       improved = true;
     }
   }
-  return { assignments, promotedTracks: [...new Set(assignments.map(a => a.track))], budget };
+  return { assignments, promotedTracks: [...new Set(assignments.map(a => a.track))], budget, conflicts };
 }
 
 // ─── Buy Recs ───
 function BuyRecs({ data, save, names, map }) {
   const [maxBuys, setMaxBuys] = useState(2);
+  const [forcedTracks, setForcedTracks] = useState([]);
+  const [forceSearch, setForceSearch] = useState("");
+  const [forceDropOpen, setForceDropOpen] = useState(false);
   const [solverResult, setSolverResult] = useState(null);
   const getS = useCallback((m, t) => (data.ownership[m] || {})[t] || "unowned", [data.ownership]);
   const paidNames = useMemo(() => names.filter(t => !map[t]?.free), [names, map]);
+
+  // Non-universal paid tracks available for forcing
+  const forceCandidates = useMemo(() => {
+    return paidNames.filter(t => {
+      const owned = data.racingMembers.filter(m => getS(m, t) === "owned").length;
+      return owned < data.racingMembers.length && !forcedTracks.includes(t);
+    });
+  }, [paidNames, data.racingMembers, getS, forcedTracks]);
+
+  const filteredForceCandidates = useMemo(() => {
+    if (!forceSearch) return forceCandidates.slice(0, 20);
+    const q = forceSearch.toLowerCase();
+    return forceCandidates.filter(t => t.toLowerCase().includes(q)).slice(0, 20);
+  }, [forceCandidates, forceSearch]);
 
   const recs = useMemo(() => {
     if (data.racingMembers.length < 2) return [];
@@ -641,7 +678,7 @@ function BuyRecs({ data, save, names, map }) {
   const hasBuys = useMemo(() => data.members.some(m => Object.values(data.ownership[m] || {}).some(v => v === "buy")), [data]);
 
   const runSolver = () => {
-    const result = solvePurchases(data.racingMembers, data.ownership, paidNames, maxBuys);
+    const result = solvePurchases(data.racingMembers, data.ownership, paidNames, maxBuys, forcedTracks);
     setSolverResult(result);
     const newOwnership = { ...data.ownership };
     // Clear existing buys for all members (racing or not)
@@ -675,15 +712,64 @@ function BuyRecs({ data, save, names, map }) {
             <button onClick={runSolver} style={{ ...btnP, padding: "7px 18px" }}>Run Optimizer</button>
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: solverResult ? 20 : 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
           <label style={{ fontSize: 12, color: C.textMuted, display: "flex", alignItems: "center", gap: 8 }}>
             Max buys per member:
             <input type="range" min={1} max={10} value={maxBuys} onChange={e => setMaxBuys(+e.target.value)} style={{ width: 120 }} />
             <span style={{ fontFamily: "monospace", color: C.accent, fontWeight: 800, fontSize: 16, minWidth: 20, textAlign: "center" }}>{maxBuys}</span>
           </label>
         </div>
+
+        {/* Force tracks */}
+        <div style={{ marginBottom: solverResult ? 20 : 0 }}>
+          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 6 }}>Force tracks into season (buys count against limit):</div>
+          {forcedTracks.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
+              {forcedTracks.map(t => (
+                <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", background: C.accentGlow, border: `1px solid ${C.accent}`, borderRadius: 4, fontSize: 11, color: C.accent }}>
+                  {t}
+                  <button onClick={() => setForcedTracks(prev => prev.filter(x => x !== t))} style={{ background: "none", border: "none", color: C.accent, cursor: "pointer", fontSize: 13, padding: 0, lineHeight: 1 }}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div style={{ position: "relative" }}>
+            <input value={forceSearch} onChange={e => { setForceSearch(e.target.value); setForceDropOpen(true); }}
+              onFocus={() => setForceDropOpen(true)}
+              onBlur={() => setTimeout(() => setForceDropOpen(false), 200)}
+              placeholder="Search tracks to force..."
+              style={{ ...inp, width: "100%", boxSizing: "border-box", fontSize: 12, padding: "6px 12px" }} />
+            {forceDropOpen && forceSearch && filteredForceCandidates.length > 0 && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, marginTop: 2, maxHeight: 200, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
+                {filteredForceCandidates.map(t => {
+                  const owned = data.racingMembers.filter(m => getS(m, t) === "owned").length;
+                  return (
+                    <div key={t} onClick={() => { setForcedTracks(prev => [...prev, t]); setForceSearch(""); setForceDropOpen(false); }}
+                      style={{ padding: "6px 12px", fontSize: 12, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${C.border}` }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.surface}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <span>{t}</span>
+                      <span style={{ fontSize: 10, fontFamily: "monospace", color: C.textDim }}>{owned}/{data.racingMembers.length}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
         {solverResult && (
           <div>
+            {/* Conflicts */}
+            {solverResult.conflicts && solverResult.conflicts.length > 0 && (
+              <div style={{ marginBottom: 16, padding: 10, background: C.dangerBg, borderRadius: 6, border: "1px solid rgba(239,68,68,0.2)" }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.danger, marginBottom: 4 }}>Budget conflicts on forced tracks</div>
+                {solverResult.conflicts.map(c => (
+                  <div key={c.track} style={{ fontSize: 11, color: C.danger }}>
+                    {c.track}: {c.members.join(", ")} exceeded buy limit
+                  </div>
+                ))}
+              </div>
+            )}
             <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
               <div style={{ padding: "10px 16px", background: C.ownedBg, borderRadius: 6, border: "1px solid rgba(34,197,94,0.2)" }}>
                 <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "monospace", color: C.owned }}>{solverResult.promotedTracks.length}</div>
@@ -693,12 +779,18 @@ function BuyRecs({ data, save, names, map }) {
                 <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "monospace", color: C.buy }}>{solverResult.assignments.length}</div>
                 <div style={{ fontSize: 10, color: C.textMuted }}>total purchases</div>
               </div>
+              {forcedTracks.length > 0 && (
+                <div style={{ padding: "10px 16px", background: C.accentGlow, borderRadius: 6, border: `1px solid ${C.accent}33` }}>
+                  <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "monospace", color: C.accent }}>{forcedTracks.length}</div>
+                  <div style={{ fontSize: 10, color: C.textMuted }}>forced</div>
+                </div>
+              )}
             </div>
             {solverResult.promotedTracks.length > 0 && (
               <div style={{ marginBottom: 16 }}>
                 <h4 style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, marginBottom: 6 }}>Newly Universal</h4>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {solverResult.promotedTracks.map(t => <span key={t} style={{ padding: "5px 10px", background: C.ownedBg, border: "1px solid rgba(34,197,94,0.2)", borderRadius: 5, fontSize: 11, color: C.owned, fontWeight: 500 }}>{t}</span>)}
+                  {solverResult.promotedTracks.map(t => <span key={t} style={{ padding: "5px 10px", background: forcedTracks.includes(t) ? C.accentGlow : C.ownedBg, border: `1px solid ${forcedTracks.includes(t) ? C.accent + "44" : "rgba(34,197,94,0.2)"}`, borderRadius: 5, fontSize: 11, color: forcedTracks.includes(t) ? C.accent : C.owned, fontWeight: 500 }}>{t}{forcedTracks.includes(t) ? " ★" : ""}</span>)}
                 </div>
               </div>
             )}
