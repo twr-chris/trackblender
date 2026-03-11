@@ -1,3 +1,2 @@
 - pin or freeze the driver name header on the ownership grid in the scrolling for the ownership grid
-- add email address visibility to league admin user page (to help de-dupe users that accidentally signed up twice)
 - add "just me" filter to the ownership grid
