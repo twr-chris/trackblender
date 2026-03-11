@@ -124,6 +124,7 @@ const DEFAULT_TRACKS = [
   { name: "Sonoma Raceway", cats: ["road", "dirt-road"], configs: null, free: false },
   { name: "South Boston Speedway", cats: ["oval"], configs: null, free: true },
   { name: "Southern National Motorsports Park", cats: ["oval"], configs: null, free: true },
+  { name: "St. Petersburg Grand Prix", cats: ["road"], configs: 1, free: false },
   { name: "Stafford Motor Speedway", cats: ["oval"], configs: null, free: false },
   { name: "Summit Point Motorsports Park", cats: ["road"], configs: null, free: true },
   { name: "Suzuka International Racing Course", cats: ["road"], configs: null, free: false },
