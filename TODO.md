@@ -1,8 +1,3 @@
-- best effort import of owned tracks from copypasta of iracing track screen
-- change ownership grid controls so the "buy" state is only accessible to the admin, and regular users just toggle the checkbox
 - pin or freeze the driver name header on the ownership grid in the scrolling for the ownership grid
-- investigate why Shell V-Power blah blah blah doesn't import
 - add email address visibility to league admin user page (to help de-dupe users that accidentally signed up twice)
-- in Schedule Builder, when counting drivers for track availability, include tracks in the "buy" state in the calculation, which allows the scheudle builder to work off of the hypothetical buys from the buy recs page
 - add "just me" filter to the ownership grid
-- 
