@@ -541,7 +541,7 @@ function Schedule({ data, save, names, map, isAdmin }) {
         {sched.length > 0 && data.members.length > 0 && (
           <div style={{ marginTop: 20 }}>
             <h4 style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: C.textMuted }}>Who needs what</h4>
-            {data.members.map(m => {
+            {data.racingMembers.map(m => {
               const miss = sched.filter(t => !map[t]?.free && getS(m, t) === "unowned");
               const buying = sched.filter(t => getS(m, t) === "buy");
               if (!miss.length && !buying.length) return <div key={m} style={{ padding: "6px 0", fontSize: 12, color: C.owned }}>✓ {m} — all set</div>;
