@@ -124,6 +124,13 @@ export default function App() {
   const isAdmin = config?.adminUids?.includes(user?.uid);
   const myMember = members[user?.uid];
 
+  // Backfill email if missing (for members who joined before email was stored)
+  useEffect(() => {
+    if (user?.email && myMember && !myMember.email) {
+      setMember(user.uid, { email: user.email });
+    }
+  }, [user, myMember]);
+
   // ─── Derived data in the old format for component compatibility ───
   const memberList = useMemo(() =>
     Object.entries(members).map(([uid, m]) => ({ uid, name: m.displayName })).sort((a, b) => a.name.localeCompare(b.name)),
@@ -292,7 +299,7 @@ function CreateLeagueScreen({ user, onCreated }) {
     setCreating(true);
     try {
       await createLeague(n, user.uid);
-      await setMember(user.uid, { displayName: dn, ownership: {}, joinedAt: new Date().toISOString() });
+      await setMember(user.uid, { displayName: dn, email: user.email || "", ownership: {}, joinedAt: new Date().toISOString() });
       await setTracks(DEFAULT_TRACKS);
       onCreated({ name: n, adminUids: [user.uid] });
     } catch (e) { console.error(e); }
@@ -324,7 +331,7 @@ function ClaimScreen({ user, members, config }) {
     const n = driverName.trim(); if (!n) return;
     setClaiming(true);
     try {
-      await setMember(user.uid, { displayName: n, ownership: {}, joinedAt: new Date().toISOString() });
+      await setMember(user.uid, { displayName: n, email: user.email || "", ownership: {}, joinedAt: new Date().toISOString() });
     } catch (e) { console.error(e); }
     setClaiming(false);
   };
@@ -923,8 +930,11 @@ function LeagueAdmin({ config, members, nameByUid }) {
           const isRacing = m.racing !== false;
           return (
           <div key={uid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: isRacing ? C.surface : "rgba(255,255,255,0.02)", borderRadius: 6, border: `1px solid ${C.border}`, opacity: isRacing ? 1 : 0.6 }}>
-            <span style={{ flex: 1, fontSize: 13 }}>{m.displayName}</span>
-            <span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>{Object.values(m.ownership || {}).filter(v => v === "owned").length} tracks</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 500 }}>{m.displayName}</div>
+              <div style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.email || "no email"} · {uid.slice(0, 8)}…</div>
+            </div>
+            <span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace", whiteSpace: "nowrap" }}>{Object.values(m.ownership || {}).filter(v => v === "owned").length} tracks</span>
             <button onClick={async () => { await setMember(uid, { racing: !isRacing }); }} style={{ padding: "3px 8px", fontSize: 9, fontWeight: 700, fontFamily: "monospace", borderRadius: 3, cursor: "pointer", border: `1px solid ${isRacing ? C.owned : C.textDim}`, background: isRacing ? C.ownedBg : "transparent", color: isRacing ? C.owned : C.textDim }}>{isRacing ? "RACING" : "NOT RACING"}</button>
             {adminUids.includes(uid) && <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, fontWeight: 700, fontFamily: "monospace", background: C.adminBg, color: C.admin }}>ADMIN</span>}
             {!adminUids.includes(uid) && <button onClick={() => removeMemberFn(uid)} style={{ ...mbtn, color: C.danger }}>remove</button>}
