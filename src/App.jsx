@@ -983,14 +983,18 @@ function parseIracingPaste(text, dbTrackNames) {
   const dbNorm = {};
   for (const name of dbTrackNames) dbNorm[normalizeForMatch(name)] = name;
 
+  // Normalize alias keys so they match the same normalization applied to paste text
+  const normAliases = {};
+  for (const [k, v] of Object.entries(TRACK_ALIASES)) normAliases[normalizeForMatch(k)] = v;
+
   const matched = [];
   const unmatched = [];
 
   for (const { rawName, configs } of parsed) {
     const norm = normalizeForMatch(rawName);
-    // Explicit alias
-    if (TRACK_ALIASES[norm]) {
-      matched.push({ raw: rawName, db: TRACK_ALIASES[norm], configs });
+    // Explicit alias (using normalized keys)
+    if (normAliases[norm]) {
+      matched.push({ raw: rawName, db: normAliases[norm], configs });
       if (norm.includes("rburgring combined")) {
         matched.push({ raw: rawName + " (GP)", db: "Nürburgring Grand-Prix-Strecke", configs: null });
       }
