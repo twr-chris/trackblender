@@ -416,7 +416,8 @@ function Grid({ data, save, names, map, currentUser, isAdmin }) {
     // Members can only edit their own row, admins can edit anyone
     if (m !== currentUser && !isAdmin) return;
     const cur = getS(m, t);
-    const next = cur === "unowned" ? "owned" : cur === "owned" ? "buy" : "unowned";
+    // Buy state is only set by the optimizer — manual toggle skips it
+    const next = (cur === "unowned" || cur === "buy") ? "owned" : "unowned";
     save({ ...data, ownership: { ...data.ownership, [m]: { ...(data.ownership[m] || {}), [t]: next } } });
   };
   const ownCount = useCallback((t) => data.racingMembers.filter(m => getS(m, t) === "owned").length, [data.racingMembers, getS]);
@@ -441,7 +442,7 @@ function Grid({ data, save, names, map, currentUser, isAdmin }) {
         <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: C.textMuted, cursor: "pointer" }}><input type="checkbox" checked={hideEmpty} onChange={e => setHideEmpty(e.target.checked)} /> Hide empty</label>
         <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: C.free, cursor: "pointer" }}><input type="checkbox" checked={hideFree} onChange={e => setHideFree(e.target.checked)} /> Hide free</label>
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 11, color: C.textDim, fontFamily: "monospace" }}>{isAdmin ? "admin: edit any row" : "click your column to edit"}</span>
+        <span style={{ fontSize: 11, color: C.textDim, fontFamily: "monospace" }}>{isAdmin ? "admin: edit any row" : "click your column to toggle"}</span>
         <button onClick={() => setShowImport(true)} style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, background: C.accentGlow, color: C.accent, border: `1px solid ${C.accent}`, borderRadius: 5, cursor: "pointer", fontFamily: "inherit" }}>Import from iRacing</button>
         {hasBuys && isAdmin && <button onClick={clearBuys} style={{ padding: "5px 12px", fontSize: 11, fontWeight: 600, background: C.buyBg, color: C.buy, border: `1px solid ${C.buy}`, borderRadius: 5, cursor: "pointer", fontFamily: "inherit" }}>Clear All Buys</button>}
       </div>
@@ -500,7 +501,9 @@ function Schedule({ data, save, names, map, isAdmin }) {
   const [catF, setCatF] = useState("all");
   const [hideFree, setHideFree] = useState(true);
   const getS = useCallback((m, t) => (data.ownership[m] || {})[t] || "unowned", [data.ownership]);
-  const effOwn = useCallback((t) => map[t]?.free ? data.racingMembers.length : data.racingMembers.filter(m => getS(m, t) === "owned").length, [map, data.racingMembers, getS]);
+  // Count both owned and buy as "have or will have" for schedule planning
+  const effOwn = useCallback((t) => map[t]?.free ? data.racingMembers.length : data.racingMembers.filter(m => { const s = getS(m, t); return s === "owned" || s === "buy"; }).length, [map, data.racingMembers, getS]);
+  // How many are "buy" specifically (not yet owned, but planned)
   const buyN = useCallback((t) => map[t]?.free ? 0 : data.racingMembers.filter(m => getS(m, t) === "buy").length, [map, data.racingMembers, getS]);
 
   const eligible = useMemo(() => {
