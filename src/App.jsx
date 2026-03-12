@@ -595,134 +595,140 @@ function Schedule({ data, save, names, map, isAdmin }) {
 }
 
 // ─── Purchase Optimizer Solver ───
+// Branch-and-bound solver: finds the maximum number of tracks promotable to
+// universal given per-member budget constraints and optional forced tracks.
 function solvePurchases(members, ownership, paidTracks, maxBuys, forcedTracks = []) {
-  const getMissing = (track) => members.filter(m => (ownership[m] || {})[track] !== "owned");
-
-  // Build missing map for all non-universal paid tracks
+  // Build missing map: track → [members who don't own it]
   const allMissing = {};
   for (const t of paidTracks) {
-    const m = getMissing(t);
+    const m = members.filter(m => (ownership[m] || {})[t] !== "owned");
     if (m.length > 0 && m.length <= members.length) allMissing[t] = m;
   }
 
-  // Separate forced from non-forced candidates
   const forcedSet = new Set(forcedTracks.filter(t => allMissing[t]));
-  const nonForced = Object.keys(allMissing).filter(t => !forcedSet.has(t));
 
-  // Strategy: try multiple approaches and pick the best result
-  const tryAssignment = (trackOrder) => {
-    const budget = {}; members.forEach(m => { budget[m] = maxBuys; });
-    const assignments = [];
-    const conflicts = [];
-    const promoted = new Set();
+  // Pre-filter: a track can only be promoted if every missing member has budget.
+  // With maxBuys=K, a member can appear in at most K tracks' missing lists.
+  // We can't know the exact limit without solving, but we CAN discard tracks where
+  // the missing count exceeds the total budget (they can never be completed).
+  // Also discard tracks that are too expensive relative to available budget per member.
+  const feasibleTracks = Object.entries(allMissing)
+    .filter(([track, miss]) => {
+      // Must be forced, or the cost must be achievable
+      if (forcedSet.has(track)) return true;
+      // A track missing N members costs N budget slots. Discard if N > total budget.
+      if (miss.length > members.length * maxBuys) return false;
+      return true;
+    })
+    .map(([track, miss]) => ({ track, miss, cost: miss.length, forced: forcedSet.has(track) }))
+    .sort((a, b) => {
+      // Forced tracks first, then by cost ascending
+      if (a.forced !== b.forced) return a.forced ? -1 : 1;
+      return a.cost - b.cost;
+    });
 
-    // Assign tracks in the given order
-    for (const track of trackOrder) {
-      const miss = allMissing[track];
-      if (!miss) continue;
-      const canComplete = miss.every(m => budget[m] > 0);
-      if (canComplete) {
-        for (const m of miss) { assignments.push({ member: m, track }); budget[m]--; }
-        promoted.add(track);
-      }
-    }
-    return { assignments, promoted, budget };
-  };
+  // For very large candidate sets, limit to the most promising tracks
+  // Keep forced + top N cheapest non-forced (they're most likely to be in the optimal solution)
+  const MAX_CANDIDATES = 50;
+  const candidates = feasibleTracks.length > MAX_CANDIDATES
+    ? [...feasibleTracks.filter(c => c.forced), ...feasibleTracks.filter(c => !c.forced).slice(0, MAX_CANDIDATES)]
+    : feasibleTracks;
 
-  // Approach 1: forced first, then greedy (original behavior, but greedy sorts by fewest missing)
-  const greedySorted = nonForced
-    .map(t => ({ track: t, cost: allMissing[t].length }))
-    .sort((a, b) => a.cost - b.cost)
-    .map(x => x.track);
-
-  const approach1 = tryAssignment([...forcedSet, ...greedySorted]);
-
-  // Approach 2: greedy first, then inject forced tracks
-  // Run greedy without forces, then see if forced tracks still fit
-  const approach2greedy = tryAssignment(greedySorted);
-  // Now try to add forced tracks with remaining budget
-  const approach2 = (() => {
-    const budget = { ...approach2greedy.budget };
-    const assignments = [...approach2greedy.assignments];
-    const promoted = new Set(approach2greedy.promoted);
-    for (const ft of forcedSet) {
-      const miss = allMissing[ft];
-      if (!miss) continue;
-      if (miss.every(m => budget[m] > 0)) {
-        for (const m of miss) { assignments.push({ member: m, track: ft }); budget[m]--; }
-        promoted.add(ft);
-      }
-    }
-    return { assignments, promoted, budget };
-  })();
-
-  // Approach 3: forced first, then greedy, but sort greedy by members with most remaining budget
-  const approach3 = (() => {
-    const budget = {}; members.forEach(m => { budget[m] = maxBuys; });
-    const assignments = [];
-    const promoted = new Set();
-
-    // Assign forced tracks first
-    for (const ft of forcedSet) {
-      const miss = allMissing[ft];
-      if (!miss) continue;
-      if (miss.every(m => budget[m] > 0)) {
-        for (const m of miss) { assignments.push({ member: m, track: ft }); budget[m]--; }
-        promoted.add(ft);
-      }
-    }
-
-    // Greedy on remaining, re-sorted by feasibility given current budgets
-    const remaining = { ...allMissing };
-    for (const t of promoted) delete remaining[t];
-
-    let improved = true;
-    while (improved) {
-      improved = false;
-      const candidates = Object.entries(remaining)
-        .map(([track, mm]) => ({ track, missing: mm }))
-        .filter(c => c.missing.every(m => budget[m] > 0))
-        .sort((a, b) => a.missing.length - b.missing.length);
-      if (candidates.length > 0) {
-        const best = candidates[0];
-        for (const m of best.missing) { assignments.push({ member: m, track: best.track }); budget[m]--; }
-        promoted.add(best.track);
-        delete remaining[best.track];
-        improved = true;
-      }
-    }
-    return { assignments, promoted, budget };
-  })();
-
-  // Pick the approach that promotes the most tracks (prefer fewer buys as tiebreaker)
-  const approaches = [approach1, approach2, approach3];
-  approaches.sort((a, b) => {
-    const aForced = [...forcedSet].filter(t => a.promoted.has(t)).length;
-    const bForced = [...forcedSet].filter(t => b.promoted.has(t)).length;
-    // Must include all forced tracks if possible
-    if (aForced !== bForced) return bForced - aForced;
-    // Then maximize promoted count
-    if (a.promoted.size !== b.promoted.size) return b.promoted.size - a.promoted.size;
-    // Then minimize total purchases
-    return a.assignments.length - b.assignments.length;
-  });
-
-  const best = approaches[0];
-
-  // Check for forced tracks that didn't make it
+  // Quick feasibility check: can we even afford all forced tracks?
   const conflicts = [];
-  for (const ft of forcedSet) {
-    if (!best.promoted.has(ft)) {
-      const miss = allMissing[ft];
-      const cantAfford = miss.filter(m => best.budget[m] <= 0);
-      conflicts.push({ track: ft, members: cantAfford.map(m => m) });
+  {
+    const testBudget = {}; members.forEach(m => { testBudget[m] = maxBuys; });
+    for (const c of candidates) {
+      if (!c.forced) continue;
+      const cantAfford = c.miss.filter(m => testBudget[m] <= 0);
+      if (cantAfford.length > 0) conflicts.push({ track: c.track, members: [...cantAfford] });
+      for (const m of c.miss) { if (testBudget[m] > 0) testBudget[m]--; }
     }
   }
 
+  // Branch and bound
+  const totalBudget = members.length * maxBuys;
+  let iterations = 0;
+  const MAX_ITERATIONS = 1000000;
+
+  // Seed with greedy solution so hitting the iteration limit still returns something good
+  const greedySeed = (() => {
+    const b = {}; members.forEach(m => { b[m] = maxBuys; });
+    const sel = []; const asgn = [];
+    for (const c of candidates) {
+      if (c.miss.every(m => b[m] > 0)) {
+        for (const m of c.miss) { b[m]--; asgn.push({ member: m, track: c.track }); }
+        sel.push(c.track);
+      }
+    }
+    return { tracks: sel, assignments: asgn, count: sel.length, usedBudget: asgn.length, budget: b };
+  })();
+  let bestSolution = greedySeed;
+
+  // Precompute: minimum possible cost of remaining forced tracks at each index
+  const forcedCostFromIdx = new Array(candidates.length + 1).fill(0);
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    forcedCostFromIdx[i] = forcedCostFromIdx[i + 1] + (candidates[i].forced ? candidates[i].cost : 0);
+  }
+
+  function solve(idx, budget, usedBudget, selected, forcedCount, totalForced) {
+    if (++iterations > MAX_ITERATIONS) return;
+
+    // Pruning: can't beat current best even if we select everything remaining
+    const remaining = candidates.length - idx;
+    if (selected.length + remaining <= bestSolution.count) return;
+
+    // Pruning: not enough total budget for remaining forced tracks
+    const remainingBudget = totalBudget - usedBudget;
+    if (remainingBudget < forcedCostFromIdx[idx]) return;
+
+    // Base case
+    if (idx >= candidates.length) {
+      // Only consider solutions that include all forced tracks
+      if (forcedCount < totalForced) return;
+      if (selected.length > bestSolution.count ||
+          (selected.length === bestSolution.count && usedBudget < bestSolution.usedBudget)) {
+        // Build assignments
+        const assignments = [];
+        for (const s of selected) {
+          for (const m of s.miss) assignments.push({ member: m, track: s.track });
+        }
+        bestSolution = {
+          tracks: selected.map(s => s.track),
+          assignments,
+          count: selected.length,
+          usedBudget,
+          budget: { ...budget },
+        };
+      }
+      return;
+    }
+
+    const c = candidates[idx];
+
+    // Try including this track (if feasible)
+    if (c.miss.every(m => budget[m] > 0)) {
+      // Deduct budget
+      for (const m of c.miss) budget[m]--;
+      selected.push(c);
+      solve(idx + 1, budget, usedBudget + c.cost, selected, forcedCount + (c.forced ? 1 : 0), totalForced);
+      selected.pop();
+      for (const m of c.miss) budget[m]++;
+    }
+
+    // Try skipping this track (only if not forced)
+    if (!c.forced) {
+      solve(idx + 1, budget, usedBudget, selected, forcedCount, totalForced);
+    }
+  }
+
+  const initBudget = {}; members.forEach(m => { initBudget[m] = maxBuys; });
+  solve(0, initBudget, 0, [], 0, forcedSet.size);
+
   return {
-    assignments: best.assignments,
-    promotedTracks: [...best.promoted],
-    budget: best.budget,
+    assignments: bestSolution.assignments || [],
+    promotedTracks: bestSolution.tracks || [],
+    budget: bestSolution.budget || initBudget,
     conflicts,
   };
 }
