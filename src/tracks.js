@@ -36,7 +36,7 @@ const DEFAULT_TRACKS = [
   { name: "Crandon International Raceway", cats: ["dirt-road"], configs: null, free: false },
   { name: "Darlington Raceway", cats: ["oval"], configs: null, free: false },
   { name: "Daytona International Speedway", cats: ["oval", "road", "dirt-road"], configs: null, free: false },
-  { name: "Daytona International Speedway – Rallycross", cats: ["dirt-road"], configs: null, free: false },
+  { name: "Daytona International Speedway – Rallycross", cats: ["dirt-road"], configs: null, free: true },
   { name: "Detroit Grand Prix at Belle Isle", cats: ["road"], configs: null, free: false },
   { name: "Donington Park Racing Circuit", cats: ["road"], configs: null, free: false },
   { name: "Dover Motor Speedway", cats: ["oval"], configs: null, free: false },
