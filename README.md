@@ -1,6 +1,9 @@
 # TrackBlender
 
-iRacing league track ownership manager. Helps leagues figure out which tracks everyone owns, plan season schedules, optimize purchases, and manage members — all with real-time sync and Google sign-in.
+iRacing league track ownership manager. Helps leagues figure out which tracks everyone owns, plan season schedules, optimize purchases, and manage members — all with real-time sync and Google sign-in. TrackBlender is developed to support Tongiht We Race, Seattle's Secret Underground Racing Laboratory. Build-from-scratch capability is not expected until v1.0 is committed, so play around at your own risk.
+
+- https://www.tonightwerace.gg
+- https://https://discord.gg/A5BbadESjK
 
 **Live site:** https://twr-chris.github.io/trackblender/
 
