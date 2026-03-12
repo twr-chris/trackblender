@@ -5,52 +5,84 @@ iRacing league track ownership manager. Helps leagues figure out which tracks ev
 - https://www.tonightwerace.gg
 - https://https://discord.gg/A5BbadESjK
 
-**Live site:** https://twr-chris.github.io/trackblender/
-
 ## Features
 
-- **Ownership Grid** — Each member marks their own tracks (click to cycle: unowned → owned → buy → unowned). Your column is always leftmost. Admins can edit any column. Non-racing members are dimmed and excluded from calculations.
-- **Schedule Builder** — Build a season from tracks with the best ownership overlap. Filter by category, minimum owners, and free/paid status. Admin-only for edits; all members can view.
-- **Purchase Optimizer** — Greedy solver that finds the maximum number of tracks promotable to universal ownership within a per-member buy limit. Results are written to the grid as "buy" states.
-- **Buy Recommendations** — Per-member best-value purchase suggestions based on how close each track is to full league coverage.
+- **Ownership Grid** — Each member marks their own tracks (click to toggle owned/unowned). Your column is always leftmost. Admins can edit any column. Non-racing members are dimmed and excluded from calculations.
+- **iRacing Import** — Paste your licensed track list directly from the iRacing client. A fuzzy parser matches track names and bulk-sets ownership. Admins can import on behalf of any member.
+- **Schedule Builder** — Build a season from tracks with the best ownership overlap. Counts both owned and "buy" states, so you can plan off the optimizer's hypothetical purchases. Filter by category, minimum owners, and free/paid. Admin-only for edits; all members can view.
+- **Purchase Optimizer** — Greedy solver that maximizes tracks promotable to universal ownership within a per-member buy limit. Supports "force buy" tracks that must be included regardless of efficiency. Results are written as buy states visible across the app.
+- **Buy Recommendations** — Per-member best-value purchase suggestions based on proximity to full league coverage.
 - **Overview** — Stats dashboard: universal tracks, one-away tracks, member library sizes, racing/non-racing breakdown.
-- **Track Editor** (admin) — Add/remove/edit tracks with multi-category tags, configuration counts, and free-with-membership flags. Reset to iRacing defaults at any time.
-- **League Admin** (admin) — Manage admins, toggle members between racing/not-racing, remove members.
+- **Track Editor** (admin) — Add/remove/edit tracks with multi-category tags (road, oval, dirt-oval, dirt-road), configuration counts, and free-with-membership flags. Reset to iRacing defaults at any time.
+- **League Admin** (admin) — Manage admins, toggle racing/not-racing status, view member emails and UIDs (for de-duplication), remove members.
 - **Self-service rename** — Any member can change their driver name by clicking their name in the header.
+
+## How It Works
+
+### For league members
+
+1. Open the site and sign in with Google.
+2. Pick a driver name on first visit.
+3. Go to the Ownership Grid and mark your tracks, or use "Import from iRacing" to bulk-import from the client.
+4. Check the Schedule Builder to see the upcoming season and what you're missing.
+5. Check Buy Recs to see what purchases would help the league most.
+
+### For the league admin
+
+The first person to sign in creates the league and becomes the admin. From there:
+
+1. Share the URL with your league — anyone with a Google account can join.
+2. Use the Track Editor to maintain the track list (add new releases, update categories, mark free tracks).
+3. Use the Purchase Optimizer to find the best set of buys for the league, optionally forcing specific tracks into the plan.
+4. Build the season schedule in the Schedule Builder, which reflects both current ownership and planned purchases.
+5. Use League Admin to manage members: toggle racing/not-racing for non-participants, promote additional admins, de-duplicate accidental signups using email/UID info.
+
+### Buy state workflow
+
+The "buy" state on a track is only settable by the Purchase Optimizer — members can't manually toggle it. This keeps buy states meaningful: they represent the optimizer's recommendation. The Schedule Builder counts buy states as owned, so you can plan a season around hypothetical purchases. Once a member actually buys a track, they click the BUY cell to promote it to owned.
 
 ## Authentication & Permissions
 
-TrackBlender uses Google sign-in via Firebase Auth. The first person to sign in creates the league and becomes the admin.
+TrackBlender uses Google sign-in via Firebase Auth. No passwords, no accounts to manage.
 
-- **Members** can edit their own ownership column and rename themselves.
-- **Admins** can edit any member's ownership, manage the schedule, edit the track list, add/remove admins, toggle racing status, and remove members.
-- **Non-racing members** appear in the grid (dimmed) but are excluded from all ownership calculations, buy recommendations, and the optimizer. Useful for league organizers who manage but don't race.
-
-New members sign in with Google and pick a driver name. No invite system needed — share the URL and anyone with a Google account can join.
+- **Members** can edit their own ownership column, import their own tracks, and rename themselves.
+- **Admins** can edit any member's ownership, import for any member, manage the schedule, edit the track list, run the optimizer, add/remove admins, toggle racing status, and remove members.
+- **Non-racing members** appear in the grid (dimmed) but are excluded from all ownership calculations, buy recommendations, the optimizer, and the "who needs what" display. Useful for league organizers who manage but don't race.
 
 ## Setup from Scratch
 
-### 1. Firebase Project
+### 1. Create a Firebase Project
 
-1. Go to [console.firebase.google.com](https://console.firebase.google.com) and create a new project.
-2. **Firestore**: Build → Firestore Database → Create database → Start in test mode, any region.
-3. **Auth**: Build → Authentication → Get started → Sign-in method tab → Enable **Google** → Set support email → Save.
-4. **Web app config**: Project Settings (gear icon) → General → Your apps → Add web app (`</>`) → Register → Copy the `firebaseConfig` object.
-5. Paste the config into `src/firebase.js`.
+1. Go to [console.firebase.google.com](https://console.firebase.google.com) and create a new project. You can skip Google Analytics.
+2. **Firestore Database**: In the left sidebar, click Build → Firestore Database → Create database. Choose "Start in test mode" and any region (us-central1 is fine for US-based leagues). Test mode expires after 30 days — you'll replace the rules in step 4.
+3. **Authentication**: Click Build → Authentication → Get started. Go to the Sign-in method tab, click Google, toggle Enable, set a support email (your email), and Save.
+4. **Web app config**: Click the gear icon (Project Settings) → General tab → scroll to "Your apps" → click the web icon (`</>`) → give it a nickname → Register app. Copy the `firebaseConfig` object.
+5. Paste the config values into `src/firebase.js`, replacing the existing config.
 
-### 2. GitHub Pages
+### 2. Set Up the Repository
 
-1. Push the repo to GitHub.
-2. Go to repo → Settings → Pages → Source → **GitHub Actions**.
-3. Pushes to `main` auto-deploy via the included workflow.
+Clone or fork this repo, then push to your own GitHub repository.
 
-### 3. Authorized Domains
+The GitHub Actions workflow (`deploy.yml`) uses `npm install` instead of `npm ci`, so no lock file is needed. If you want faster builds, run `npm install` locally once to generate `package-lock.json`, commit it, and change the workflow back to `npm ci` with `cache: npm` enabled.
 
-In Firebase Console → Authentication → Settings → Authorized domains, add your GitHub Pages domain (e.g. `your-username.github.io`).
+### 3. Enable GitHub Pages
 
-### 4. Firestore Security Rules
+1. Go to your repo on GitHub → Settings → Pages.
+2. Under "Build and deployment", set Source to **GitHub Actions**.
+3. Push to `main` — the workflow will build and deploy automatically.
+4. Your site will be at `https://your-username.github.io/your-repo-name/`.
 
-In Firebase Console → Firestore → Rules, paste:
+If you use a different repo name than `trackblender`, update the `base` path in `vite.config.js` to match.
+
+### 4. Authorize Your Domain
+
+In Firebase Console → Authentication → Settings tab → Authorized domains, click Add domain and enter your GitHub Pages domain (e.g. `your-username.github.io`). Without this, Google sign-in will fail with an "unauthorized domain" error.
+
+If you later add a custom domain, add that here too.
+
+### 5. Set Firestore Security Rules
+
+In Firebase Console → Firestore Database → Rules tab, replace the default rules with:
 
 ```
 rules_version = '2';
@@ -77,21 +109,61 @@ service cloud.firestore {
 }
 ```
 
-This ensures: any authenticated user can read everything and create their member document; only admins can modify league config, tracks, and schedules; members can only write to their own document (admins can write to any member document). The `isAdmin` function reads the config document to check the admin list, which costs one extra Firestore read per write.
+Click Publish. These rules enforce:
+
+- **Read**: any authenticated user can read all league data.
+- **Create**: any authenticated user can create documents (needed for the first-run league creation and member join flow).
+- **Update/delete league config, tracks, schedule**: admin only. The `isAdmin` helper reads the config document to check the admin list (costs one extra Firestore read per write, negligible at league scale).
+- **Update/delete member documents**: the member themselves or an admin. This is how members edit their own ownership and admins can edit anyone's.
+
+The `allow create` on data documents is intentionally open to handle the first-run case where no config document exists yet (so no admin list to check against). After the league is created, new data documents are rare — tracks and schedule already exist and only get updated, not created.
+
+### 6. First Sign-In
+
+Open your deployed site. You'll see a Google sign-in screen. Sign in — since no league exists yet, you'll be prompted to name your league and pick your driver name. You're now the admin.
+
+Share the URL with your league members. They sign in, pick a driver name, and start marking tracks.
+
+## About the Firebase Config in Source Code
+
+The `firebaseConfig` object in `src/firebase.js` is committed to the repo. This looks like an exposed secret but isn't — it's a client-side project identifier, not an access credential. Every Firebase web app works this way (inspect the source of any Firebase-powered site and you'll find the same). Google designed this to be public.
+
+The config tells the Firebase SDK where your project lives. It does not grant access. Access is controlled entirely by your Firestore security rules, which require Google authentication and enforce per-user write restrictions.
+
+The actual attack surface: someone could find your config, initialize a Firebase SDK, authenticate with a Google account, and join your league as a new member. They could then write to their own member document. They cannot read or modify other members' data, the track list, or the schedule (unless they're an admin). This is the same "threat" as someone joining your Discord with a burner account — a nuisance, not a security breach. You'd see them in League Admin and remove them.
+
+If this still bothers you, you can move the config to environment variables (`VITE_FIREBASE_API_KEY` etc. in a gitignored `.env` file). The values still end up in the built JavaScript bundle served to browsers, so it's not meaningfully more secure — but it keeps automated secret scanners from flagging the repo.
 
 ## Firestore Data Model
 
 ```
 leagues/{leagueId}/
   data/
-    config    — { name, adminUids[], createdAt }
-    tracks    — { list: [...track objects] }
-    schedule  — { rounds: [...track names] }
+    config    — { name, adminUids[], createdAt, updatedAt }
+    tracks    — { list: [...track objects], updatedAt }
+    schedule  — { rounds: [...track names], updatedAt }
   members/
-    {uid}     — { displayName, ownership: {trackName: status}, racing: bool, joinedAt }
+    {uid}     — { displayName, email, ownership: {trackName: status}, racing: bool, joinedAt, updatedAt }
 ```
 
-`leagueId` is currently `"default"`. The namespace exists to support multi-tenancy later.
+`leagueId` is currently hardcoded as `"default"`. The namespace exists to support multi-tenancy later without a data migration.
+
+Each track object in the `tracks.list` array has: `name` (string), `cats` (string array of categories), `configs` (number or null), `free` (boolean).
+
+Ownership status values: `"owned"`, `"unowned"`, `"buy"` (set by the optimizer only).
+
+## iRacing Import
+
+Members can bulk-import their track ownership by pasting text from the iRacing client's "My Licensed Tracks" screen (list view, Ctrl+A, Ctrl+C). The parser:
+
+1. Identifies the track data section between the "Track Name" header and "Licenses" footer.
+2. Extracts track names and configuration counts from the alternating name/number line format.
+3. Matches names to the database using three tiers: explicit alias map (for known mismatches like "Road Atlanta" → "Michelin Raceway Road Atlanta"), normalized string comparison (case/punctuation insensitive), and substring containment as a fallback.
+4. Shows a preview of matched and unmatched tracks before committing.
+
+The import is destructive — it resets the target member's ownership to only include tracks found in the paste. This is intentional: the iRacing client is the source of truth for what someone owns.
+
+If new track name mismatches are discovered, add them to the `TRACK_ALIASES` map in `App.jsx`.
 
 ## Local Development
 
@@ -102,13 +174,15 @@ npm run dev
 
 Opens at `http://localhost:5173/trackblender/`
 
+The app connects to your production Firebase project even in dev mode. There's no separate dev database — changes you make locally are live. If you want isolation, create a second Firebase project and swap the config.
+
 ## Project Structure
 
 ```
 src/
   main.jsx        — React entry point
-  App.jsx         — All UI components (auth flows, grid, schedule, optimizer, stats, admin)
-  firebase.js     — Firebase config, auth, and Firestore read/write/subscribe functions
+  App.jsx         — All UI components (auth flows, grid, schedule, optimizer, stats, admin, import)
+  firebase.js     — Firebase config, auth, and Firestore CRUD + real-time subscriptions
   tracks.js       — Default iRacing track database (148 tracks, multi-category, free flags)
 ```
 
@@ -118,12 +192,21 @@ src/
 - Firebase Auth (Google sign-in) + Firestore (real-time sync)
 - GitHub Pages (static hosting via GitHub Actions)
 - No CSS framework — inline styles with a custom dark theme
+- No server — entirely client-side; Firebase handles auth and storage
 
 ## Track Data
 
 The default track list is sourced from [iracing.com/tracks](https://www.iracing.com/tracks/) (March 2026, 148 tracks). Each track has:
 
 - **Name** — official iRacing name
-- **Categories** — multi-select: road, oval, dirt-oval, dirt-road (tracks like Charlotte and Daytona have multiple)
-- **Configs** — number of configurations (null if unknown, editable via Track Editor)
-- **Free** — included with iRacing membership (excluded from buy recommendations)
+- **Categories** — multi-select: road, oval, dirt-oval, dirt-road (tracks like Charlotte and Daytona span multiple types)
+- **Configs** — number of layout configurations (null if unknown, populated via import or Track Editor)
+- **Free** — included with iRacing membership (auto-owned for everyone, excluded from buy recommendations and the optimizer)
+
+The track list is stored in Firestore and editable via the Track Editor. The defaults in `tracks.js` are only used when seeding a new league.
+
+## Real-Time Sync
+
+All data syncs in real-time via Firestore's `onSnapshot` listeners. If two members are filling in tracks at the same time, they see each other's changes appear live. The app uses a `pendingWrites` guard to prevent race conditions: when you make a change, inbound sync updates for your document are temporarily ignored until your write completes, preventing the "revert on echo" problem.
+
+Saves are debounced (400ms) to avoid excessive Firestore writes during rapid clicking.
