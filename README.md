@@ -5,6 +5,10 @@ iRacing league track ownership manager. Helps leagues figure out which tracks ev
 - https://www.tonightwerace.gg
 - https://https://discord.gg/A5BbadESjK
 
+## The Laziest League Admin
+
+If you, like me, find maintaining infrastructure tedious, please delight in this zero cost, zero operational load solution.
+
 ## Features
 
 - **Ownership Grid** — Each member marks their own tracks (click to toggle owned/unowned). Your column is always leftmost. Admins can edit any column. Non-racing members are dimmed and excluded from calculations.
