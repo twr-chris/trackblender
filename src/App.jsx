@@ -209,6 +209,14 @@ export default function App() {
         {tab === "trackeditor" && isAdmin && <Editor tracks={tracks} save={saveTracksFn} />}
         {tab === "leagueadmin" && isAdmin && <LeagueAdmin config={config} members={members} nameByUid={nameByUid} />}
       </div>
+
+      {/* Footer */}
+      <div style={{ padding: "20px 24px", borderTop: `1px solid ${C.border}`, textAlign: "center" }}>
+        <a href="https://github.com/twr-chris/trackblender" target="_blank" rel="noopener noreferrer"
+          style={{ fontSize: 11, color: C.textDim, textDecoration: "none", fontFamily: "monospace" }}>
+          powered by TrackBlender
+        </a>
+      </div>
     </div>
   );
 }
