@@ -47,7 +47,7 @@ export function Stats({ data, names, map }) {
       {stats.uni.length === 0 ? <div style={{ color: C.textMuted, fontSize: 12, marginBottom: 20 }}>None</div> : <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 20 }}>{stats.uni.map(t => <span key={t} style={{ padding: "5px 10px", background: C.ownedBg, border: "1px solid rgba(34,197,94,0.2)", borderRadius: 5, fontSize: 11, color: C.owned, fontWeight: 500 }}>{t}</span>)}</div>}
       <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>One Away <span style={{ fontWeight: 400, color: C.textMuted, fontSize: 12 }}>— one purchase to full</span></h3>
       {stats.almost.length === 0 ? <div style={{ color: C.textMuted, fontSize: 12 }}>None</div> : <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{stats.almost.map(t => {
-        const miss = data.members.find(m => getS(m, t) !== "owned");
+        const miss = data.racingMembers.find(m => getS(m, t) !== "owned");
         return <span key={t} style={{ padding: "5px 10px", background: C.buyBg, border: "1px solid rgba(245,158,11,0.2)", borderRadius: 5, fontSize: 11, color: C.buy }}>{t} <span style={{ color: C.textMuted }}>({miss})</span></span>;
       })}</div>}
     </div>
