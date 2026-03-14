@@ -1,8 +1,10 @@
 // Branch-and-bound solver: finds the maximum number of tracks promotable to
 // universal given per-member budget constraints and optional forced tracks.
-export function solvePurchases(members, ownership, paidTracks, maxBuys, forcedTracks = []) {
+export function solvePurchases(members, ownership, paidTracks, maxBuys, forcedTracks = [], excludedTracks = []) {
+  const excludedSet = new Set(excludedTracks);
   const allMissing = {};
   for (const t of paidTracks) {
+    if (excludedSet.has(t)) continue;
     const m = members.filter(m => (ownership[m] || {})[t] !== "owned");
     if (m.length > 0 && m.length <= members.length) allMissing[t] = m;
   }

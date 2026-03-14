@@ -8,6 +8,9 @@ export function BuyRecs({ data, save, names, map }) {
   const [forcedTracks, setForcedTracks] = useState([]);
   const [forceSearch, setForceSearch] = useState("");
   const [forceDropOpen, setForceDropOpen] = useState(false);
+  const [excludedTracks, setExcludedTracks] = useState([]);
+  const [excludeSearch, setExcludeSearch] = useState("");
+  const [excludeDropOpen, setExcludeDropOpen] = useState(false);
   const [solverResult, setSolverResult] = useState(null);
   const getS = useCallback((m, t) => (data.ownership[m] || {})[t] || "unowned", [data.ownership]);
   const paidNames = useMemo(() => names.filter(t => !map[t]?.free), [names, map]);
@@ -15,15 +18,28 @@ export function BuyRecs({ data, save, names, map }) {
   const forceCandidates = useMemo(() => {
     return paidNames.filter(t => {
       const owned = data.racingMembers.filter(m => getS(m, t) === "owned").length;
-      return owned < data.racingMembers.length && !forcedTracks.includes(t);
+      return owned < data.racingMembers.length && !forcedTracks.includes(t) && !excludedTracks.includes(t);
     });
-  }, [paidNames, data.racingMembers, getS, forcedTracks]);
+  }, [paidNames, data.racingMembers, getS, forcedTracks, excludedTracks]);
 
   const filteredForceCandidates = useMemo(() => {
     if (!forceSearch) return forceCandidates.slice(0, 20);
     const q = forceSearch.toLowerCase();
     return forceCandidates.filter(t => t.toLowerCase().includes(q)).slice(0, 20);
   }, [forceCandidates, forceSearch]);
+
+  const excludeCandidates = useMemo(() => {
+    return paidNames.filter(t => {
+      const owned = data.racingMembers.filter(m => getS(m, t) === "owned").length;
+      return owned < data.racingMembers.length && !excludedTracks.includes(t) && !forcedTracks.includes(t);
+    });
+  }, [paidNames, data.racingMembers, getS, excludedTracks, forcedTracks]);
+
+  const filteredExcludeCandidates = useMemo(() => {
+    if (!excludeSearch) return excludeCandidates.slice(0, 20);
+    const q = excludeSearch.toLowerCase();
+    return excludeCandidates.filter(t => t.toLowerCase().includes(q)).slice(0, 20);
+  }, [excludeCandidates, excludeSearch]);
 
   const recs = useMemo(() => {
     if (data.racingMembers.length < 2) return [];
@@ -39,7 +55,7 @@ export function BuyRecs({ data, save, names, map }) {
   const hasBuys = useMemo(() => data.members.some(m => Object.values(data.ownership[m] || {}).some(v => v === "buy")), [data]);
 
   const runSolver = () => {
-    const result = solvePurchases(data.racingMembers, data.ownership, paidNames, maxBuys, forcedTracks);
+    const result = solvePurchases(data.racingMembers, data.ownership, paidNames, maxBuys, forcedTracks, excludedTracks);
     setSolverResult(result);
     const newOwnership = { ...data.ownership };
     for (const m of data.members) { const mo = { ...(newOwnership[m] || {}) }; for (const [t, v] of Object.entries(mo)) { if (v === "buy") mo[t] = "unowned"; } newOwnership[m] = mo; }
@@ -117,6 +133,45 @@ export function BuyRecs({ data, save, names, map }) {
             )}
           </div>
         </div>
+
+        {/* Exclude tracks */}
+        <div style={{ marginBottom: solverResult ? 20 : 0 }}>
+          <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 6 }}>Exclude tracks from consideration:</div>
+          {excludedTracks.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
+              {excludedTracks.map(t => (
+                <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", background: C.dangerBg, border: `1px solid ${C.danger}`, borderRadius: 4, fontSize: 11, color: C.danger }}>
+                  {t}
+                  <button onClick={() => setExcludedTracks(prev => prev.filter(x => x !== t))} style={{ background: "none", border: "none", color: C.danger, cursor: "pointer", fontSize: 13, padding: 0, lineHeight: 1 }}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div style={{ position: "relative" }}>
+            <input value={excludeSearch} onChange={e => { setExcludeSearch(e.target.value); setExcludeDropOpen(true); }}
+              onFocus={() => setExcludeDropOpen(true)}
+              onBlur={() => setTimeout(() => setExcludeDropOpen(false), 200)}
+              placeholder="Search tracks to exclude..."
+              style={{ ...inp, width: "100%", boxSizing: "border-box", fontSize: 12, padding: "6px 12px" }} />
+            {excludeDropOpen && excludeSearch && filteredExcludeCandidates.length > 0 && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 6, marginTop: 2, maxHeight: 200, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
+                {filteredExcludeCandidates.map(t => {
+                  const owned = data.racingMembers.filter(m => getS(m, t) === "owned").length;
+                  return (
+                    <div key={t} onClick={() => { setExcludedTracks(prev => [...prev, t]); setExcludeSearch(""); setExcludeDropOpen(false); }}
+                      style={{ padding: "6px 12px", fontSize: 12, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${C.border}` }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.surface}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <span>{t}</span>
+                      <span style={{ fontSize: 10, fontFamily: "monospace", color: C.textDim }}>{owned}/{data.racingMembers.length}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
         {solverResult && (
           <div>
             {solverResult.conflicts && solverResult.conflicts.length > 0 && (
@@ -142,6 +197,12 @@ export function BuyRecs({ data, save, names, map }) {
                 <div style={{ padding: "10px 16px", background: C.accentGlow, borderRadius: 6, border: `1px solid ${C.accent}33` }}>
                   <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "monospace", color: C.accent }}>{forcedTracks.length}</div>
                   <div style={{ fontSize: 10, color: C.textMuted }}>forced</div>
+                </div>
+              )}
+              {excludedTracks.length > 0 && (
+                <div style={{ padding: "10px 16px", background: C.dangerBg, borderRadius: 6, border: "1px solid rgba(239,68,68,0.2)" }}>
+                  <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "monospace", color: C.danger }}>{excludedTracks.length}</div>
+                  <div style={{ fontSize: 10, color: C.textMuted }}>excluded</div>
                 </div>
               )}
             </div>
