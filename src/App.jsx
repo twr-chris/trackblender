@@ -5,6 +5,8 @@ import {
   getTracks, setTracks, subscribeTracks,
   getSchedule, setSchedule, subscribeSchedule,
   setMember, subscribeMembers,
+  getRaces, addRace, setRace, deleteRace, subscribeRaces,
+  getEloRatings, setEloRatings, subscribeEloRatings,
 } from "./firebase.js";
 import DEFAULT_TRACKS, { normalizeTracks } from "./tracks.js";
 import { C, mbtn } from "./lib/shared.js";
@@ -15,6 +17,7 @@ import { BuyRecs } from "./components/BuyRecs.jsx";
 import { Stats } from "./components/Stats.jsx";
 import { Editor } from "./components/Editor.jsx";
 import { LeagueAdmin } from "./components/LeagueAdmin.jsx";
+import { Elo } from "./components/Elo.jsx";
 
 export default function App() {
   const [user, setUser] = useState(undefined);
@@ -22,6 +25,8 @@ export default function App() {
   const [tracks, setTracksState] = useState(DEFAULT_TRACKS);
   const [schedule, setScheduleState] = useState([]);
   const [members, setMembersState] = useState({});
+  const [races, setRacesState] = useState({});
+  const [eloRatings, setEloRatingsState] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("grid");
   const [saveStatus, setSaveStatus] = useState("");
@@ -36,15 +41,23 @@ export default function App() {
     if (!user) return;
     let unsubs = [];
     (async () => {
-      const [cfg, trk, sch] = await Promise.all([getConfig(), getTracks(), getSchedule()]);
+      const [cfg, trk, sch, rcs, elo] = await Promise.all([
+        getConfig(), getTracks(), getSchedule(),
+        getRaces().catch(() => ({})),
+        getEloRatings().catch(() => null),
+      ]);
       if (cfg) setConfigState(cfg);
       if (trk) setTracksState(normalizeTracks(trk));
       if (sch) setScheduleState(sch);
+      if (rcs) setRacesState(rcs);
+      if (elo) setEloRatingsState(elo);
       setLoading(false);
 
       unsubs.push(subscribeConfig(v => { if (v) setConfigState(v); }));
       unsubs.push(subscribeTracks(v => { if (v) setTracksState(normalizeTracks(v)); }));
       unsubs.push(subscribeSchedule(v => { if (v) setScheduleState(v); }));
+      try { unsubs.push(subscribeRaces(v => setRacesState(v))); } catch (e) { console.warn("Races subscription failed:", e); }
+      try { unsubs.push(subscribeEloRatings(v => { if (v) setEloRatingsState(v); })); } catch (e) { console.warn("ELO subscription failed:", e); }
       unsubs.push(subscribeMembers(v => {
         setMembersState(prev => {
           if (pendingWrites.current.size === 0) return v;
@@ -170,6 +183,7 @@ export default function App() {
     { id: "schedule", label: "Schedule Builder", icon: "📅" },
     { id: "buy", label: "Buy Recs", icon: "🛒" },
     { id: "stats", label: "Overview", icon: "📊" },
+    { id: "elo", label: "ELO", icon: "🏆" },
   ];
   const admTabs = isAdmin ? [{ id: "trackeditor", label: "Track Editor", icon: "🔧" }, { id: "leagueadmin", label: "League", icon: "⚙️" }] : [];
   const allTabs = [...mainTabs, ...admTabs];
@@ -206,6 +220,7 @@ export default function App() {
         {tab === "schedule" && <Schedule data={data} save={save} names={trackNames} map={trackMap} isAdmin={isAdmin} />}
         {tab === "buy" && <BuyRecs data={data} save={save} names={trackNames} map={trackMap} />}
         {tab === "stats" && <Stats data={data} names={trackNames} map={trackMap} />}
+        {tab === "elo" && <Elo races={races} eloRatings={eloRatings} members={members} nameByUid={nameByUid} isAdmin={isAdmin} addRace={addRace} setRace={setRace} deleteRace={deleteRace} setEloRatings={setEloRatings} persist={persist} trackNames={trackNames} />}
         {tab === "trackeditor" && isAdmin && <Editor tracks={tracks} save={saveTracksFn} />}
         {tab === "leagueadmin" && isAdmin && <LeagueAdmin config={config} members={members} nameByUid={nameByUid} />}
       </div>

@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, setDoc, collection, onSnapshot, query, deleteDoc } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, getDocs, setDoc, collection, onSnapshot, query, deleteDoc, addDoc, orderBy } from 'firebase/firestore';
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut as fbSignOut, onAuthStateChanged } from 'firebase/auth';
 
 const firebaseConfig = {
@@ -23,6 +23,9 @@ const tracksRef = () => doc(leagueRef(), 'data', 'tracks');
 const scheduleRef = () => doc(leagueRef(), 'data', 'schedule');
 const memberRef = (uid) => doc(leagueRef(), 'members', uid);
 const membersCol = () => collection(leagueRef(), 'members');
+const racesCol = () => collection(leagueRef(), 'races');
+const raceRef = (id) => doc(leagueRef(), 'races', id);
+const eloRatingsRef = () => doc(leagueRef(), 'data', 'eloRatings');
 
 // ─── Auth ───
 export function onAuth(callback) {
@@ -121,5 +124,50 @@ export async function createLeague(name, adminUid) {
     adminUids: [adminUid],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+  });
+}
+
+// ─── Races ───
+export async function getRaces() {
+  const snap = await getDocs(query(racesCol(), orderBy('date'), orderBy('raceNumber')));
+  const races = {};
+  snap.forEach(d => { races[d.id] = d.data(); });
+  return races;
+}
+
+export async function addRace(data) {
+  const ref = await addDoc(racesCol(), { ...data, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  return ref.id;
+}
+
+export async function setRace(id, data) {
+  await setDoc(raceRef(id), { ...data, updatedAt: new Date().toISOString() }, { merge: true });
+}
+
+export async function deleteRace(id) {
+  await deleteDoc(raceRef(id));
+}
+
+export function subscribeRaces(callback) {
+  return onSnapshot(query(racesCol(), orderBy('date'), orderBy('raceNumber')), snap => {
+    const races = {};
+    snap.forEach(d => { races[d.id] = d.data(); });
+    callback(races);
+  });
+}
+
+// ─── ELO Ratings ───
+export async function getEloRatings() {
+  const snap = await getDoc(eloRatingsRef());
+  return snap.exists() ? snap.data() : null;
+}
+
+export async function setEloRatings(data) {
+  await setDoc(eloRatingsRef(), { ...data, updatedAt: new Date().toISOString() });
+}
+
+export function subscribeEloRatings(callback) {
+  return onSnapshot(eloRatingsRef(), snap => {
+    callback(snap.exists() ? snap.data() : null);
   });
 }

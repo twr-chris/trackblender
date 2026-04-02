@@ -16,6 +16,7 @@ export const C = {
   danger: "#ef4444", dangerBg: "rgba(239, 68, 68, 0.1)",
   admin: "#a78bfa", adminBg: "rgba(167, 139, 250, 0.1)",
   free: "#38bdf8", freeBg: "rgba(56, 189, 248, 0.1)",
+  elo: "#fbbf24", eloBg: "rgba(251, 191, 36, 0.1)",
 };
 
 export const CAT_COLORS = {
