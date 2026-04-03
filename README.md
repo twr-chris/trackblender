@@ -18,7 +18,8 @@ If you, like me, find maintaining infrastructure tedious, please delight in this
 - **Buy Recommendations** — Per-member best-value purchase suggestions based on proximity to full league coverage.
 - **Overview** — Stats dashboard: universal tracks, one-away tracks, member library sizes, racing/non-racing breakdown.
 - **Track Editor** (admin) — Add/remove/edit tracks with multi-category tags (road, oval, dirt-oval, dirt-road), configuration counts, and free-with-membership flags. Reset to iRacing defaults at any time.
-- **League Admin** (admin) — Manage admins, toggle racing/not-racing status, view member emails and UIDs (for de-duplication), remove members.
+- **League ELO** — Enter race results with a drag-to-position UI (drag drivers from an available pool into finish order). Supports multi-class seasons, same-night double headers, and external (non-member) drivers. On-demand ELO calculation using a pairwise multi-player algorithm with tunable K-factor. Standings table with ratings, race count, and member/external indicators. Admin can link external drivers to members once they join.
+- **League Admin** (admin) — Manage admins, toggle racing/not-racing status, set driver aliases for race result matching, view member emails and UIDs (for de-duplication), remove members. Sortable by join date or name.
 - **Self-service rename** — Any member can change their driver name by clicking their name in the header.
 
 ## How It Works
@@ -109,6 +110,11 @@ service cloud.firestore {
       allow update, delete: if request.auth != null
         && (request.auth.uid == uid || isAdmin(league));
     }
+
+    match /leagues/{league}/races/{raceId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if request.auth != null && isAdmin(league);
+    }
   }
 }
 ```
@@ -119,6 +125,7 @@ Click Publish. These rules enforce:
 - **Create**: any authenticated user can create documents (needed for the first-run league creation and member join flow).
 - **Update/delete league config, tracks, schedule**: admin only. The `isAdmin` helper reads the config document to check the admin list (costs one extra Firestore read per write, negligible at league scale).
 - **Update/delete member documents**: the member themselves or an admin. This is how members edit their own ownership and admins can edit anyone's.
+- **Race records**: admin only for all writes. All authenticated users can read.
 
 The `allow create` on data documents is intentionally open to handle the first-run case where no config document exists yet (so no admin list to check against). After the league is created, new data documents are rare — tracks and schedule already exist and only get updated, not created.
 
@@ -143,11 +150,14 @@ If this still bothers you, you can move the config to environment variables (`VI
 ```
 leagues/{leagueId}/
   data/
-    config    — { name, adminUids[], createdAt, updatedAt }
-    tracks    — { list: [...track objects], updatedAt }
-    schedule  — { rounds: [...track names], updatedAt }
+    config      — { name, adminUids[], createdAt, updatedAt }
+    tracks      — { list: [...track objects], updatedAt }
+    schedule    — { rounds: [...track names], updatedAt }
+    eloRatings  — { ratings: {driverKey: {elo, racesPlayed}}, kFactor, lastCalculatedAt }
   members/
-    {uid}     — { displayName, email, ownership: {trackName: status}, racing: bool, joinedAt, updatedAt }
+    {uid}       — { displayName, email, ownership: {trackName: status}, aliases: string[], racing: bool, joinedAt, updatedAt }
+  races/
+    {autoId}    — { date, raceNumber, trackName, season, raceClass, results: [{driverKey, name, position}], createdAt }
 ```
 
 `leagueId` is currently hardcoded as `"default"`. The namespace exists to support multi-tenancy later without a data migration.
@@ -184,10 +194,26 @@ The app connects to your production Firebase project even in dev mode. There's n
 
 ```
 src/
-  main.jsx        — React entry point
-  App.jsx         — All UI components (auth flows, grid, schedule, optimizer, stats, admin, import)
-  firebase.js     — Firebase config, auth, and Firestore CRUD + real-time subscriptions
-  tracks.js       — Default iRacing track database (148 tracks, multi-category, free flags)
+  App.jsx              — Shell, auth flow, data loading, tab routing
+  main.jsx             — React entry point
+  firebase.js          — Firebase config, auth, Firestore CRUD + real-time subscriptions
+  tracks.js            — Default iRacing track database (148 tracks, multi-category, free flags)
+  lib/
+    shared.js          — Color constants, category definitions, shared style objects
+    solver.js          — Branch-and-bound purchase optimizer
+    parser.js          — iRacing paste parser + track name alias map
+    elo.js             — Multi-player ELO calculation (pairwise algorithm)
+  components/
+    shared.jsx         — Reusable UI atoms: CatTags, Badges, StatCard, Empty
+    auth.jsx           — SignIn, CreateLeague, Claim, FullScreen, UserName
+    Grid.jsx           — Ownership grid + toggle logic
+    Schedule.jsx       — Season schedule builder
+    BuyRecs.jsx        — Purchase optimizer UI + best-value recommendations
+    Stats.jsx          — Overview / stats dashboard
+    Elo.jsx            — ELO tab: standings, race results, settings
+    Editor.jsx         — Track editor (admin-only)
+    LeagueAdmin.jsx    — Admin panel (member management, permissions, driver aliases)
+    ImportModal.jsx    — iRacing track paste importer
 ```
 
 ## Tech Stack
