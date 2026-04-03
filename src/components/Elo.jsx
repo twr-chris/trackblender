@@ -211,7 +211,7 @@ function StandingsView({ standings, eloRatings, raceCount, isAdmin, members, rac
                 {s.isMember && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 5px", borderRadius: 3, fontWeight: 600, fontFamily: "monospace", background: C.ownedBg, color: C.owned }}>TB</span>}
                 {!s.isMember && <span style={{ marginLeft: 6, fontSize: 9, padding: "1px 5px", borderRadius: 3, fontWeight: 600, fontFamily: "monospace", background: "rgba(255,255,255,0.05)", color: C.textDim }}>EXT</span>}
               </td>
-              <td style={{ ...tdS, textAlign: "right", fontFamily: "monospace", fontWeight: 700, fontSize: 14, color: s.elo >= 1000 ? C.owned : C.danger }}>{s.elo}</td>
+              <td style={{ ...tdS, textAlign: "right", fontFamily: "monospace", fontWeight: 700, fontSize: 14, color: s.elo >= 1000 ? C.owned : C.text }}>{s.elo}</td>
               <td style={{ ...tdS, textAlign: "right", fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{s.racesPlayed}</td>
               {isAdmin && !s.isMember && (
                 <td style={tdS}>
@@ -958,7 +958,7 @@ function MyStatsView({ currentUid, races, eloRatings, nameByUid }) {
         <StatCard label="Podiums" value={stats.podiums} color={C.owned} />
         <StatCard label="Avg Finish" value={stats.avgFinish} color={C.textMuted} />
         <StatCard label="Best Finish" value={`P${stats.bestFinish}`} color={C.owned} />
-        {myElo && <StatCard label="ELO" value={Math.round(myElo.elo)} color={myElo.elo >= 1000 ? C.owned : C.danger} />}
+        {myElo && <StatCard label="ELO" value={Math.round(myElo.elo)} color={myElo.elo >= 1000 ? C.owned : C.text} />}
       </div>
 
       {seasonStats.length > 1 && (
