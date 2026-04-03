@@ -11,6 +11,7 @@ export function Elo({ races, eloRatings, members, nameByUid, isAdmin, addRace, s
   const [view, setView] = useState("standings"); // standings | races | settings
   const [expandedRace, setExpandedRace] = useState(null);
   const [seasonFilter, setSeasonFilter] = useState("all");
+  const [classFilter, setClassFilter] = useState("all");
   const [showAddForm, setShowAddForm] = useState(false);
 
   // Build alias map: lowercased name/alias -> uid
@@ -43,17 +44,25 @@ export function Elo({ races, eloRatings, members, nameByUid, isAdmin, addRace, s
 
   // Sorted race list
   const raceList = useMemo(() =>
-    Object.entries(races).map(([id, r]) => ({ id, ...r })).sort((a, b) => (a.date || "").localeCompare(b.date || "") || (a.raceNumber || 1) - (b.raceNumber || 1)),
+    Object.entries(races).map(([id, r]) => ({ id, ...r })).sort((a, b) => (a.date || "").localeCompare(b.date || "") || (a.raceNumber || 1) - (b.raceNumber || 1) || (a.raceClass || "").localeCompare(b.raceClass || "")),
     [races]
   );
 
-  // Unique seasons
+  // Unique seasons and classes
   const seasons = useMemo(() => {
     const s = new Set(raceList.map(r => r.season).filter(Boolean));
     return [...s].sort();
   }, [raceList]);
 
-  const filteredRaces = seasonFilter === "all" ? raceList : raceList.filter(r => r.season === seasonFilter);
+  const classes = useMemo(() => {
+    const c = new Set(raceList.map(r => r.raceClass).filter(Boolean));
+    return [...c].sort();
+  }, [raceList]);
+
+  const filteredRaces = raceList.filter(r =>
+    (seasonFilter === "all" || r.season === seasonFilter) &&
+    (classFilter === "all" || r.raceClass === classFilter)
+  );
 
   // Standings data
   const standings = useMemo(() => {
@@ -88,7 +97,7 @@ export function Elo({ races, eloRatings, members, nameByUid, isAdmin, addRace, s
   const handleCalculate = async (kFactor) => {
     const sorted = Object.entries(races)
       .map(([id, r]) => r)
-      .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+      .sort((a, b) => (a.date || "").localeCompare(b.date || "") || (a.raceNumber || 1) - (b.raceNumber || 1) || (a.raceClass || "").localeCompare(b.raceClass || ""));
     const ratings = calculateElo(sorted, kFactor);
     await setEloRatings({ ratings, kFactor, lastCalculatedAt: new Date().toISOString() });
   };
@@ -116,7 +125,7 @@ export function Elo({ races, eloRatings, members, nameByUid, isAdmin, addRace, s
       </div>
 
       {view === "standings" && <StandingsView standings={standings} eloRatings={eloRatings} raceCount={raceList.length} isAdmin={isAdmin} members={members} races={races} setRace={setRace} nameByUid={nameByUid} />}
-      {view === "races" && <RacesView races={filteredRaces} seasons={seasons} seasonFilter={seasonFilter} setSeasonFilter={setSeasonFilter} expandedRace={expandedRace} setExpandedRace={setExpandedRace} isAdmin={isAdmin} showAddForm={showAddForm} setShowAddForm={setShowAddForm} members={members} knownNames={knownNames} resolveDriver={resolveDriver} addRace={addRace} deleteRace={deleteRace} setRace={setRace} nameByUid={nameByUid} eloRatings={eloRatings} trackNames={trackNames} />}
+      {view === "races" && <RacesView races={filteredRaces} seasons={seasons} classes={classes} seasonFilter={seasonFilter} setSeasonFilter={setSeasonFilter} classFilter={classFilter} setClassFilter={setClassFilter} expandedRace={expandedRace} setExpandedRace={setExpandedRace} isAdmin={isAdmin} showAddForm={showAddForm} setShowAddForm={setShowAddForm} members={members} knownNames={knownNames} resolveDriver={resolveDriver} addRace={addRace} deleteRace={deleteRace} setRace={setRace} nameByUid={nameByUid} eloRatings={eloRatings} trackNames={trackNames} />}
       {view === "settings" && isAdmin && <SettingsView eloRatings={eloRatings} handleCalculate={handleCalculate} raceCount={raceList.length} />}
     </div>
   );
@@ -222,7 +231,7 @@ function LinkDriverButton({ driverKey, driverName, members, races, setRace, name
 }
 
 // ─── Race Results ───
-function RacesView({ races, seasons, seasonFilter, setSeasonFilter, expandedRace, setExpandedRace, isAdmin, showAddForm, setShowAddForm, members, knownNames, resolveDriver, addRace, deleteRace, setRace, nameByUid, eloRatings, trackNames }) {
+function RacesView({ races, seasons, classes, seasonFilter, setSeasonFilter, classFilter, setClassFilter, expandedRace, setExpandedRace, isAdmin, showAddForm, setShowAddForm, members, knownNames, resolveDriver, addRace, deleteRace, setRace, nameByUid, eloRatings, trackNames }) {
 
   if (races.length === 0 && !showAddForm) {
     return (
@@ -240,6 +249,10 @@ function RacesView({ races, seasons, seasonFilter, setSeasonFilter, expandedRace
           <option value="all">All Seasons</option>
           {seasons.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        {classes.length > 0 && <select value={classFilter} onChange={e => setClassFilter(e.target.value)} style={{ ...inp, padding: "6px 10px" }}>
+          <option value="all">All Classes</option>
+          {classes.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>}
         {isAdmin && <button onClick={() => setShowAddForm(!showAddForm)} style={btnP}>{showAddForm ? "Cancel" : "+ Add Race"}</button>}
         <span style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>{races.length} race{races.length !== 1 ? "s" : ""}</span>
       </div>
@@ -253,6 +266,7 @@ function RacesView({ races, seasons, seasonFilter, setSeasonFilter, expandedRace
               <span style={{ fontSize: 12, fontFamily: "monospace", color: C.textMuted, minWidth: 80 }}>{r.date || "no date"}</span>
               <span style={{ fontSize: 10, fontFamily: "monospace", color: C.textDim, minWidth: 20 }}>R{r.raceNumber || 1}</span>
               <span style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>{r.trackName || "Race"}</span>
+              {r.raceClass && <span style={{ fontSize: 9, padding: "2px 8px", borderRadius: 3, fontWeight: 600, fontFamily: "monospace", background: C.freeBg, color: C.free }}>{r.raceClass}</span>}
               <span style={{ fontSize: 9, padding: "2px 8px", borderRadius: 3, fontWeight: 600, fontFamily: "monospace", background: C.eloBg, color: C.elo }}>{r.season}</span>
               <span style={{ fontSize: 11, color: C.textMuted }}>{(r.results || []).length} drivers</span>
               <span style={{ color: C.textDim }}>{expandedRace === r.id ? "▲" : "▼"}</span>
@@ -272,9 +286,10 @@ function RaceDetail({ race, isAdmin, setRace, deleteRace, setExpandedRace, nameB
   const [editRaceNum, setEditRaceNum] = useState(race.raceNumber || 1);
   const [editTrack, setEditTrack] = useState(race.trackName || "");
   const [editSeason, setEditSeason] = useState(race.season || "");
+  const [editClass, setEditClass] = useState(race.raceClass || "");
 
   const handleSave = async () => {
-    await setRace(race.id, { date: editDate, raceNumber: editRaceNum, trackName: editTrack.trim() || null, season: editSeason.trim() });
+    await setRace(race.id, { date: editDate, raceNumber: editRaceNum, trackName: editTrack.trim() || null, season: editSeason.trim(), raceClass: editClass.trim() || null });
     setEditing(false);
   };
 
@@ -289,6 +304,7 @@ function RaceDetail({ race, isAdmin, setRace, deleteRace, setExpandedRace, nameB
             {(trackNames || []).map(t => <option key={t} value={t}>{t}</option>)}
           </select>
           <input value={editSeason} onChange={e => setEditSeason(e.target.value)} placeholder="Season" style={{ ...inp, width: 80, padding: "4px 8px", fontSize: 12 }} />
+          <input value={editClass} onChange={e => setEditClass(e.target.value)} placeholder="Class (optional)" style={{ ...inp, width: 100, padding: "4px 8px", fontSize: 12 }} />
           <button onClick={handleSave} style={{ ...btnP, padding: "4px 12px", fontSize: 11 }}>Save</button>
           <button onClick={() => setEditing(false)} style={{ ...mbtn, color: C.textMuted, fontSize: 11 }}>Cancel</button>
         </div>
@@ -328,6 +344,7 @@ function AddRaceForm({ members, knownNames, resolveDriver, addRace, onDone, eloR
   const [raceNumber, setRaceNumber] = useState(1);
   const [trackName, setTrackName] = useState("");
   const [season, setSeason] = useState("");
+  const [raceClass, setRaceClass] = useState("");
   const [newDriver, setNewDriver] = useState("");
 
   // Positioned = finished order (top = P1). Available = not yet placed.
@@ -437,7 +454,7 @@ function AddRaceForm({ members, knownNames, resolveDriver, addRace, onDone, eloR
       return { ...resolved, position: i + 1 };
     });
     if (results.length < 2) return;
-    await addRace({ date, raceNumber, trackName: trackName.trim() || null, season: season.trim(), results });
+    await addRace({ date, raceNumber, trackName: trackName.trim() || null, season: season.trim(), raceClass: raceClass.trim() || null, results });
     onDone();
   };
 
@@ -458,6 +475,7 @@ function AddRaceForm({ members, knownNames, resolveDriver, addRace, onDone, eloR
           {(trackNames || []).map(t => <option key={t} value={t}>{t}</option>)}
         </select>
         <input value={season} onChange={e => setSeason(e.target.value)} placeholder="Season (e.g. S1)" style={{ ...inp, width: 100 }} />
+        <input value={raceClass} onChange={e => setRaceClass(e.target.value)} placeholder="Class (optional)" style={{ ...inp, width: 120 }} />
       </div>
 
       {/* Positioned pool — finish order */}
