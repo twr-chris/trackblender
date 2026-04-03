@@ -638,6 +638,7 @@ function ImportRaceModal({ members, addRace, onClose }) {
   const [linkMap, setLinkMap] = useState({}); // custId → uid
   const [overrideMap, setOverrideMap] = useState({}); // "eventIdx-raceIdx-driverIdx" → uid
   const [collapsedEvents, setCollapsedEvents] = useState({});
+  const [forceSingleClass, setForceSingleClass] = useState(false);
 
   const handleFiles = async (e) => {
     const files = [...(e.target.files || [])];
@@ -672,7 +673,26 @@ function ImportRaceModal({ members, addRace, onClose }) {
 
   const handleLink = (custId, uid) => setLinkMap(prev => ({ ...prev, [custId]: uid }));
 
-  const totalRaces = events.reduce((n, ev) => n + ev.parsed.races.length, 0);
+  // When forcing single class, merge all class results into one race per event
+  const effectiveEvents = useMemo(() => {
+    if (!forceSingleClass) return events;
+    return events.map(ev => {
+      if (ev.parsed.races.length <= 1) return ev;
+      const allResults = ev.parsed.races.flatMap(r => r.results);
+      // Re-sort by overall position and re-number
+      allResults.sort((a, b) => a.position - b.position);
+      const merged = allResults.map((r, i) => ({ ...r, position: i + 1 }));
+      return {
+        ...ev,
+        parsed: {
+          ...ev.parsed,
+          races: [{ ...ev.parsed.races[0], raceClass: null, results: merged }],
+        },
+      };
+    });
+  }, [events, forceSingleClass]);
+
+  const totalRaces = effectiveEvents.reduce((n, ev) => n + ev.parsed.races.length, 0);
 
   const handleImport = async () => {
     setImporting(true);
@@ -683,7 +703,7 @@ function ImportRaceModal({ members, addRace, onClose }) {
       }
 
       // Auto-save custId for matched non-virtual drivers (always overwrite so stale pod IDs get replaced)
-      for (const ev of events) {
+      for (const ev of effectiveEvents) {
         for (const race of ev.parsed.races) {
           for (const r of race.results) {
             if ((r.matchType === "alias" || r.matchType === "custId") && r.custId && !members[r.driverKey]?.virtual && members[r.driverKey]?.iracingCustId !== r.custId) {
@@ -694,7 +714,7 @@ function ImportRaceModal({ members, addRace, onClose }) {
       }
 
       // Create race records
-      for (const [ei, ev] of events.entries()) {
+      for (const [ei, ev] of effectiveEvents.entries()) {
         for (const [ri, race] of ev.parsed.races.entries()) {
           const updatedResults = race.results.map((r, di) => {
             const overrideKey = `${ei}-${ri}-${di}`;
@@ -755,11 +775,15 @@ function ImportRaceModal({ members, addRace, onClose }) {
             {/* Shared season */}
             <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
               <input value={season} onChange={e => setSeason(e.target.value)} placeholder="Season (e.g. 6)" style={{ ...inp, width: 100, padding: "4px 8px", fontSize: 12 }} />
-              <span style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>{events.length} file{events.length !== 1 ? "s" : ""} · {totalRaces} race{totalRaces !== 1 ? "s" : ""}</span>
+              <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: C.textMuted, cursor: "pointer", userSelect: "none" }}>
+                <input type="checkbox" checked={forceSingleClass} onChange={e => setForceSingleClass(e.target.checked)} />
+                Force single class
+              </label>
+              <span style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>{effectiveEvents.length} file{effectiveEvents.length !== 1 ? "s" : ""} · {totalRaces} race{totalRaces !== 1 ? "s" : ""}</span>
             </div>
 
             {/* Per-file event groups */}
-            {events.map((ev, ei) => {
+            {effectiveEvents.map((ev, ei) => {
               const collapsed = !!collapsedEvents[ei];
               return (
                 <div key={ei} style={{ marginBottom: 10 }}>
