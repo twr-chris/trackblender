@@ -20,6 +20,7 @@ If you, like me, find maintaining infrastructure tedious, please delight in this
 - **Track Editor** (admin) — Add/remove/edit tracks with multi-category tags (road, oval, dirt-oval, dirt-road), configuration counts, and free-with-membership flags. Reset to iRacing defaults at any time.
 - **League ELO** — Enter race results manually with a drag-to-position UI, or bulk-import from iRacing event result JSON files (multi-file, multi-class). Automatic driver resolution via iRacing customer ID, aliases, and display name. Supports virtual members for shared-pod/local drivers with seasonal identity mapping. On-demand ELO calculation using a pairwise multi-player algorithm with tunable K-factor. Standings with provisional filtering, race history grouped by season, and admin tools for linking external drivers.
 - **League Admin** (admin) — Manage admins, toggle racing/not-racing status, set driver aliases and iRacing customer IDs for race result matching, create virtual members for local/pod drivers, view member emails and UIDs (for de-duplication), remove members. Sortable by join date or name.
+- **League Logo** (admin) — Upload a custom logo that replaces the default icon in the header. Image is resized client-side and stored in Firestore as a base64 data URL.
 - **Self-service rename** — Any member can change their driver name by clicking their name in the header.
 
 ## How It Works
@@ -150,7 +151,7 @@ If this still bothers you, you can move the config to environment variables (`VI
 ```
 leagues/{leagueId}/
   data/
-    config      — { name, adminUids[], createdAt, updatedAt }
+    config      — { name, adminUids[], logoUrl?: string, createdAt, updatedAt }
     tracks      — { list: [...track objects], updatedAt }
     schedule    — { rounds: [...track names], updatedAt }
     eloRatings  — { ratings: {driverKey: {elo, racesPlayed}}, kFactor, lastCalculatedAt }

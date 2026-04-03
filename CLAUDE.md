@@ -51,7 +51,7 @@ The codebase was originally a single-file monolith (App.jsx at ~1,340 lines). It
 ```
 leagues/{leagueId}/
   data/
-    config      — { name, adminUids[], createdAt }
+    config      — { name, adminUids[], logoUrl?: string (base64 data URL), createdAt }
     tracks      — { list: [...track objects] }
     schedule    — { rounds: [...track names] }
     eloRatings  — { ratings: {driverKey: {elo, racesPlayed}}, kFactor, lastCalculatedAt }
@@ -121,7 +121,7 @@ Race results can be imported from iRacing's event result JSON export. The parser
 
 Driver resolution uses a three-tier strategy: `iracingCustId` match (strongest) → alias/display name match → unmatched (external). For non-virtual members, the custId is auto-saved and updated on each import, so a driver who transitions from a shared pod to their own remote account will have their custId corrected on the next import where they're alias-matched. Virtual members never have their custId auto-saved — pod assignment is always explicit and seasonal.
 
-The import preview allows per-driver reassignment before committing, handling edge cases like a guest driver using someone else's pod for a night.
+The import preview allows per-driver reassignment before committing, handling edge cases like a guest driver using someone else's pod for a night. A "force single class" toggle merges multi-class results into one race when iRacing reports separate classes that are actually the same car (e.g. two SF23 variants).
 
 Race dates are stored as full ISO timestamps from iRacing (UTC) and converted to local time for display. Manually entered races store `YYYY-MM-DD` strings; the display logic handles both formats.
 
