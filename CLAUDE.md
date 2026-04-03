@@ -30,6 +30,7 @@ src/
     solver.js          — Branch-and-bound purchase optimizer
     parser.js          — iRacing paste parser + track name alias map
     elo.js             — Multi-player ELO calculation (pairwise algorithm)
+    iracing-parser.js  — iRacing event result JSON parser (driver resolution, multi-class)
   components/
     shared.jsx         — Reusable UI atoms: CatTags, Badges, StatCard, Empty
     auth.jsx           — SignIn, CreateLeague, Claim, FullScreen, UserName
@@ -55,7 +56,7 @@ leagues/{leagueId}/
     schedule    — { rounds: [...track names] }
     eloRatings  — { ratings: {driverKey: {elo, racesPlayed}}, kFactor, lastCalculatedAt }
   members/
-    {uid}       — { displayName, email, ownership: {trackName: status}, aliases: string[], racing: bool, joinedAt }
+    {uid}       — { displayName, email, ownership: {trackName: status}, aliases: string[], iracingCustId: string?, virtual: bool?, racing: bool, joinedAt }
   races/
     {autoId}    — { date, raceNumber, trackName, season, raceClass, results: [{driverKey, name, position}], createdAt }
 ```
@@ -68,6 +69,8 @@ leagues/{leagueId}/
 - Each track object: `{ name, cats: string[], configs: number|null, free: boolean }`
 - The `racing` flag on members controls inclusion in calculations. Non-racing members appear dimmed in the grid but are excluded from the optimizer, schedule builder counts, and buy recommendations.
 - The `aliases` array on members stores alternative driver names (e.g. "Johnny B" for "John Baker"), used for resolving pasted race results to the correct member.
+- `iracingCustId` stores a member's iRacing customer ID for automatic resolution during JSON import. For non-virtual members, this is auto-saved/updated during import. For virtual members, it must be set manually in League Admin (pod-to-human mapping is seasonal and explicit).
+- Virtual members (`virtual: true`) represent local/pod drivers who don't have their own iRacing account. They use synthetic UIDs (`virtual_<slug>`), appear in the member list, carry ELO, but can't log in. Created via League Admin. When a virtual member later goes remote and creates a real TB account, an admin can link the identities via the standings view (rewrites all historical race records).
 - Race results reference TB members by UID (`driverKey`). Non-TB drivers use `"ext_" + slugified-name` as their key — these are "dangling" until linked to a member.
 - `raceClass` is optional — used for multi-class seasons (e.g. "GT3", "GT4"). Each class in a multi-class race is stored as a separate race record sharing the same date and raceNumber.
 - Races are ordered by `date → raceNumber → raceClass`. Two scored races per night means raceNumber 1 and 2, with class distinguishing within-race splits.
@@ -111,6 +114,16 @@ The ELO system treats each race as N*(N-1)/2 pairwise matchups. For each pair, t
 ELO is unified across classes and seasons. A driver who races GT3 in one season and GT4 in the next carries one rating. This is intentional — one of the primary use cases is making class bucketing decisions at the start of a season.
 
 ELO calculation is triggered manually by an admin ("Calculate ELO" button), not computed on the fly. This keeps writes minimal and lets the admin control when ratings update. Race records are the source of truth; ratings can always be recalculated from scratch.
+
+### iRacing JSON import and identity resolution
+
+Race results can be imported from iRacing's event result JSON export. The parser extracts driver names, customer IDs, finishing positions (within class), car classes, track name, and full UTC timestamp. Multi-file import is supported — select an entire season's worth of JSONs at once.
+
+Driver resolution uses a three-tier strategy: `iracingCustId` match (strongest) → alias/display name match → unmatched (external). For non-virtual members, the custId is auto-saved and updated on each import, so a driver who transitions from a shared pod to their own remote account will have their custId corrected on the next import where they're alias-matched. Virtual members never have their custId auto-saved — pod assignment is always explicit and seasonal.
+
+The import preview allows per-driver reassignment before committing, handling edge cases like a guest driver using someone else's pod for a night.
+
+Race dates are stored as full ISO timestamps from iRacing (UTC) and converted to local time for display. Manually entered races store `YYYY-MM-DD` strings; the display logic handles both formats.
 
 ### No backend server
 

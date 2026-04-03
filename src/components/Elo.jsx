@@ -2,9 +2,39 @@ import { useState, useMemo, useCallback } from "react";
 import { C, inp, btnP, mbtn, thS, tdS } from "../lib/shared.js";
 import { StatCard, Empty } from "./shared.jsx";
 import { calculateElo } from "../lib/elo.js";
+import { parseIracingResult } from "../lib/iracing-parser.js";
+import { setMember } from "../firebase.js";
 
 function slugify(s) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+// Display a date string in local time. Handles both full ISO ("2026-01-29T03:00:15Z")
+// and plain date ("2026-01-29") for backward compat with manually entered races.
+function displayDate(d) {
+  if (!d) return "no date";
+  if (d.includes("T")) {
+    const dt = new Date(d);
+    return dt.toLocaleDateString("en-CA"); // "YYYY-MM-DD" format in local tz
+  }
+  return d;
+}
+
+// Deterministic color from string — pleasant pastel palette
+const CLASS_PALETTE = [
+  { fg: "#60a5fa", bg: "rgba(96,165,250,0.12)" },   // blue
+  { fg: "#f472b6", bg: "rgba(244,114,182,0.12)" },   // pink
+  { fg: "#34d399", bg: "rgba(52,211,153,0.12)" },     // emerald
+  { fg: "#fb923c", bg: "rgba(251,146,60,0.12)" },     // orange
+  { fg: "#a78bfa", bg: "rgba(167,139,250,0.12)" },    // violet
+  { fg: "#fbbf24", bg: "rgba(251,191,36,0.12)" },     // amber
+  { fg: "#2dd4bf", bg: "rgba(45,212,191,0.12)" },     // teal
+  { fg: "#f87171", bg: "rgba(248,113,113,0.12)" },    // red
+];
+function classColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+  return CLASS_PALETTE[Math.abs(h) % CLASS_PALETTE.length];
 }
 
 export function Elo({ races, eloRatings, members, nameByUid, isAdmin, addRace, setRace, deleteRace, setEloRatings, persist, trackNames }) {
@@ -133,8 +163,12 @@ export function Elo({ races, eloRatings, members, nameByUid, isAdmin, addRace, s
 
 // ─── Standings ───
 function StandingsView({ standings, eloRatings, raceCount, isAdmin, members, races, setRace, nameByUid }) {
-  const driverCount = standings.length;
-  const highest = standings.length > 0 ? standings[0] : null;
+  const [hideProvisional, setHideProvisional] = useState(true);
+  const PROVISIONAL_THRESHOLD = 6;
+
+  const filtered = hideProvisional ? standings.filter(s => s.racesPlayed >= PROVISIONAL_THRESHOLD) : standings;
+  const provisionalCount = standings.length - standings.filter(s => s.racesPlayed >= PROVISIONAL_THRESHOLD).length;
+  const highest = filtered.length > 0 ? filtered[0] : null;
 
   if (!eloRatings?.ratings || standings.length === 0) {
     return <Empty icon="🏆" title="No ELO Ratings Yet" sub="Add race results and calculate ELO from the Settings tab." />;
@@ -144,8 +178,16 @@ function StandingsView({ standings, eloRatings, raceCount, isAdmin, members, rac
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 20 }}>
         <StatCard label="Total Races" value={raceCount} color={C.elo} />
-        <StatCard label="Drivers Rated" value={driverCount} color={C.accent} />
+        <StatCard label="Drivers Rated" value={filtered.length} color={C.accent} />
         <StatCard label="Highest ELO" value={highest ? `${highest.elo}` : "-"} color={C.owned} />
+      </div>
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: C.textMuted, cursor: "pointer", userSelect: "none" }}>
+          <input type="checkbox" checked={hideProvisional} onChange={e => setHideProvisional(e.target.checked)} />
+          Hide provisional (&lt;{PROVISIONAL_THRESHOLD} races)
+        </label>
+        {hideProvisional && provisionalCount > 0 && <span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>{provisionalCount} hidden</span>}
       </div>
 
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -159,7 +201,7 @@ function StandingsView({ standings, eloRatings, raceCount, isAdmin, members, rac
           </tr>
         </thead>
         <tbody>
-          {standings.map((s, i) => (
+          {filtered.map((s, i) => (
             <tr key={s.driverKey}>
               <td style={{ ...tdS, textAlign: "center", color: C.textMuted, fontFamily: "monospace", fontSize: 12 }}>{i + 1}</td>
               <td style={tdS}>
@@ -232,6 +274,21 @@ function LinkDriverButton({ driverKey, driverName, members, races, setRace, name
 
 // ─── Race Results ───
 function RacesView({ races, seasons, classes, seasonFilter, setSeasonFilter, classFilter, setClassFilter, expandedRace, setExpandedRace, isAdmin, showAddForm, setShowAddForm, members, knownNames, resolveDriver, addRace, deleteRace, setRace, nameByUid, eloRatings, trackNames }) {
+  const [showImport, setShowImport] = useState(false);
+  const [collapsedSeasons, setCollapsedSeasons] = useState({}); // season → bool
+
+  const toggleSeason = (s) => setCollapsedSeasons(prev => ({ ...prev, [s]: !prev[s] }));
+
+  // Group races by season
+  const racesBySeason = useMemo(() => {
+    const groups = {};
+    for (const r of races) {
+      const s = r.season || "Untagged";
+      if (!groups[s]) groups[s] = [];
+      groups[s].push(r);
+    }
+    return groups;
+  }, [races]);
 
   if (races.length === 0 && !showAddForm) {
     return (
@@ -254,26 +311,44 @@ function RacesView({ races, seasons, classes, seasonFilter, setSeasonFilter, cla
           {classes.map(c => <option key={c} value={c}>{c}</option>)}
         </select>}
         {isAdmin && <button onClick={() => setShowAddForm(!showAddForm)} style={btnP}>{showAddForm ? "Cancel" : "+ Add Race"}</button>}
+        {isAdmin && <button onClick={() => setShowImport(true)} style={{ ...btnP, background: C.free }}>Import iRacing JSON</button>}
         <span style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>{races.length} race{races.length !== 1 ? "s" : ""}</span>
       </div>
 
       {showAddForm && isAdmin && <AddRaceForm members={members} knownNames={knownNames} resolveDriver={resolveDriver} addRace={addRace} onDone={() => setShowAddForm(false)} eloRatings={eloRatings} trackNames={trackNames} />}
+      {showImport && isAdmin && <ImportRaceModal members={members} addRace={addRace} onClose={() => setShowImport(false)} />}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {races.map(r => (
-          <div key={r.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, overflow: "hidden" }}>
-            <div onClick={() => setExpandedRace(expandedRace === r.id ? null : r.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", cursor: "pointer" }}>
-              <span style={{ fontSize: 12, fontFamily: "monospace", color: C.textMuted, minWidth: 80 }}>{r.date || "no date"}</span>
-              <span style={{ fontSize: 10, fontFamily: "monospace", color: C.textDim, minWidth: 20 }}>R{r.raceNumber || 1}</span>
-              <span style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>{r.trackName || "Race"}</span>
-              {r.raceClass && <span style={{ fontSize: 9, padding: "2px 8px", borderRadius: 3, fontWeight: 600, fontFamily: "monospace", background: C.freeBg, color: C.free }}>{r.raceClass}</span>}
-              <span style={{ fontSize: 9, padding: "2px 8px", borderRadius: 3, fontWeight: 600, fontFamily: "monospace", background: C.eloBg, color: C.elo }}>{r.season}</span>
-              <span style={{ fontSize: 11, color: C.textMuted }}>{(r.results || []).length} drivers</span>
-              <span style={{ color: C.textDim }}>{expandedRace === r.id ? "▲" : "▼"}</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {Object.entries(racesBySeason).map(([seasonName, seasonRaces]) => {
+          const collapsed = !!collapsedSeasons[seasonName];
+          return (
+            <div key={seasonName}>
+              <div onClick={() => toggleSeason(seasonName)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", cursor: "pointer", userSelect: "none" }}>
+                <span style={{ color: C.textDim, fontSize: 12 }}>{collapsed ? "▶" : "▼"}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.elo }}>Season {seasonName}</span>
+                <span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>{seasonRaces.length} race{seasonRaces.length !== 1 ? "s" : ""}</span>
+                <div style={{ flex: 1, height: 1, background: C.border, marginLeft: 8 }} />
+              </div>
+              {!collapsed && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {seasonRaces.map(r => (
+                    <div key={r.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, overflow: "hidden" }}>
+                      <div onClick={() => setExpandedRace(expandedRace === r.id ? null : r.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", cursor: "pointer" }}>
+                        <span style={{ fontSize: 12, fontFamily: "monospace", color: C.textMuted, minWidth: 80 }}>{displayDate(r.date)}</span>
+                        <span style={{ fontSize: 10, fontFamily: "monospace", color: C.textDim, minWidth: 20 }}>R{r.raceNumber || 1}</span>
+                        <span style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>{r.trackName || "Race"}</span>
+                        {r.raceClass && <span style={{ fontSize: 9, padding: "2px 8px", borderRadius: 3, fontWeight: 600, fontFamily: "monospace", background: classColor(r.raceClass).bg, color: classColor(r.raceClass).fg }}>{r.raceClass}</span>}
+                        <span style={{ fontSize: 11, color: C.textMuted }}>{(r.results || []).length} drivers</span>
+                        <span style={{ color: C.textDim }}>{expandedRace === r.id ? "▲" : "▼"}</span>
+                      </div>
+                      {expandedRace === r.id && <RaceDetail race={r} isAdmin={isAdmin} setRace={setRace} deleteRace={deleteRace} setExpandedRace={setExpandedRace} nameByUid={nameByUid} trackNames={trackNames} />}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            {expandedRace === r.id && <RaceDetail race={r} isAdmin={isAdmin} setRace={setRace} deleteRace={deleteRace} setExpandedRace={setExpandedRace} nameByUid={nameByUid} trackNames={trackNames} />}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -549,6 +624,214 @@ function AddRaceForm({ members, knownNames, resolveDriver, addRace, onDone, eloR
         <div style={{ flex: 1 }} />
         <button onClick={onDone} style={{ ...mbtn, color: C.textMuted }}>Cancel</button>
         <button onClick={handleSave} style={btnP}>Save Race ({positioned.length} drivers)</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── iRacing JSON Import Modal (multi-file) ───
+function ImportRaceModal({ members, addRace, onClose }) {
+  const [events, setEvents] = useState([]); // [{ parsed, raceNumber, fileName }]
+  const [error, setError] = useState("");
+  const [season, setSeason] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [linkMap, setLinkMap] = useState({}); // custId → uid
+  const [overrideMap, setOverrideMap] = useState({}); // "eventIdx-raceIdx-driverIdx" → uid
+  const [collapsedEvents, setCollapsedEvents] = useState({});
+
+  const handleFiles = async (e) => {
+    const files = [...(e.target.files || [])];
+    if (!files.length) return;
+    setError("");
+    const results = [];
+    for (const file of files) {
+      try {
+        const text = await file.text();
+        const json = JSON.parse(text);
+        const result = parseIracingResult(json, members);
+        if (result.error) { setError(prev => prev ? prev + "\n" + file.name + ": " + result.error : file.name + ": " + result.error); continue; }
+        if (result.races.length === 0) continue;
+        results.push({ parsed: result, raceNumber: 1, fileName: file.name });
+      } catch (err) {
+        setError(prev => prev ? prev + "\n" + file.name + ": " + err.message : file.name + ": " + err.message);
+      }
+    }
+    // Sort by date for sensible race number defaults
+    results.sort((a, b) => (a.parsed.date || "").localeCompare(b.parsed.date || ""));
+    // Auto-assign race numbers: group by date, increment within same date
+    const dateCounts = {};
+    for (const r of results) {
+      const d = displayDate(r.parsed.date);
+      dateCounts[d] = (dateCounts[d] || 0) + 1;
+      r.raceNumber = dateCounts[d];
+    }
+    setEvents(results);
+  };
+
+  const setEventRaceNumber = (i, n) => setEvents(prev => prev.map((ev, j) => j === i ? { ...ev, raceNumber: n } : ev));
+
+  const handleLink = (custId, uid) => setLinkMap(prev => ({ ...prev, [custId]: uid }));
+
+  const totalRaces = events.reduce((n, ev) => n + ev.parsed.races.length, 0);
+
+  const handleImport = async () => {
+    setImporting(true);
+    try {
+      // Save custId links (skip virtual members — their pod mapping is managed manually)
+      for (const [custId, uid] of Object.entries(linkMap)) {
+        if (uid && !members[uid]?.virtual) await setMember(uid, { iracingCustId: custId });
+      }
+
+      // Auto-save custId for matched non-virtual drivers (always overwrite so stale pod IDs get replaced)
+      for (const ev of events) {
+        for (const race of ev.parsed.races) {
+          for (const r of race.results) {
+            if ((r.matchType === "alias" || r.matchType === "custId") && r.custId && !members[r.driverKey]?.virtual && members[r.driverKey]?.iracingCustId !== r.custId) {
+              await setMember(r.driverKey, { iracingCustId: r.custId });
+            }
+          }
+        }
+      }
+
+      // Create race records
+      for (const [ei, ev] of events.entries()) {
+        for (const [ri, race] of ev.parsed.races.entries()) {
+          const updatedResults = race.results.map((r, di) => {
+            const overrideKey = `${ei}-${ri}-${di}`;
+            if (overrideMap[overrideKey]) {
+              const uid = overrideMap[overrideKey];
+              return { ...r, driverKey: uid, name: members[uid]?.displayName || r.name };
+            }
+            if (r.matchType === "unmatched" && linkMap[r.custId]) {
+              const uid = linkMap[r.custId];
+              return { ...r, driverKey: uid, name: members[uid]?.displayName || r.name };
+            }
+            return r;
+          });
+          const cleanResults = updatedResults.map(({ matchType, custId, iracingName, ...rest }) => rest);
+          await addRace({
+            date: race.date,
+            raceNumber: ev.raceNumber,
+            trackName: race.trackName,
+            season: season.trim(),
+            raceClass: race.raceClass,
+            results: cleanResults,
+          });
+        }
+      }
+      onClose();
+    } catch (err) {
+      setError("Import failed: " + err.message);
+    }
+    setImporting(false);
+  };
+
+  const memberOptions = Object.entries(members)
+    .map(([uid, m]) => ({ uid, name: m.displayName }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const matchColor = { custId: C.owned, alias: C.elo, unmatched: C.danger, linked: C.owned, override: C.admin };
+  const matchLabel = { custId: "ID", alias: "name", unmatched: "?", linked: "linked", override: "reassigned" };
+
+  const overlay = { position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" };
+  const modal = { background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 24, maxWidth: 700, width: "90%", maxHeight: "85vh", overflow: "auto" };
+
+  return (
+    <div style={overlay} onClick={onClose}>
+      <div style={modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: C.free, margin: 0 }}>Import iRacing Results</h3>
+          <button onClick={onClose} style={{ ...mbtn, color: C.textMuted, fontSize: 16 }}>x</button>
+        </div>
+
+        {events.length === 0 ? (
+          <div>
+            <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>Select one or more iRacing event result JSON files.</p>
+            <input type="file" accept=".json" multiple onChange={handleFiles} style={{ fontSize: 13, color: C.text, marginBottom: 12 }} />
+            {error && <div style={{ color: C.danger, fontSize: 12, marginTop: 8, whiteSpace: "pre-line" }}>{error}</div>}
+          </div>
+        ) : (
+          <div>
+            {/* Shared season */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
+              <input value={season} onChange={e => setSeason(e.target.value)} placeholder="Season (e.g. 6)" style={{ ...inp, width: 100, padding: "4px 8px", fontSize: 12 }} />
+              <span style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>{events.length} file{events.length !== 1 ? "s" : ""} · {totalRaces} race{totalRaces !== 1 ? "s" : ""}</span>
+            </div>
+
+            {/* Per-file event groups */}
+            {events.map((ev, ei) => {
+              const collapsed = !!collapsedEvents[ei];
+              return (
+                <div key={ei} style={{ marginBottom: 10 }}>
+                  <div onClick={() => setCollapsedEvents(prev => ({ ...prev, [ei]: !prev[ei] }))}
+                    style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 0", cursor: "pointer", userSelect: "none" }}>
+                    <span style={{ color: C.textDim, fontSize: 11 }}>{collapsed ? "▶" : "▼"}</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{ev.parsed.trackName}</span>
+                    <span style={{ fontSize: 11, color: C.textMuted }}>{displayDate(ev.parsed.date)}</span>
+                    <span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>R</span>
+                    <input type="number" value={ev.raceNumber} onChange={e => { e.stopPropagation(); setEventRaceNumber(ei, Number(e.target.value)); }}
+                      onClick={e => e.stopPropagation()} min={1} style={{ ...inp, width: 40, padding: "2px 6px", fontSize: 11, textAlign: "center" }} />
+                    <span style={{ fontSize: 10, color: C.textDim, fontFamily: "monospace" }}>{ev.parsed.races.length} class{ev.parsed.races.length !== 1 ? "es" : ""}</span>
+                    <div style={{ flex: 1, height: 1, background: C.border, marginLeft: 4 }} />
+                  </div>
+
+                  {!collapsed && ev.parsed.races.map((race, ri) => (
+                    <div key={ri} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6, padding: 12, marginBottom: 6, marginLeft: 16 }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                        {race.raceClass && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 3, fontWeight: 600, fontFamily: "monospace", background: classColor(race.raceClass).bg, color: classColor(race.raceClass).fg }}>{race.raceClass}</span>}
+                        <span style={{ fontSize: 11, color: C.textMuted }}>{race.results.length} drivers</span>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        {race.results.map((r, di) => {
+                          const overrideKey = `${ei}-${ri}-${di}`;
+                          const hasOverride = !!overrideMap[overrideKey];
+                          const hasLink = r.matchType === "unmatched" && !!linkMap[r.custId];
+                          const effectiveMatch = hasOverride ? "override" : hasLink ? "linked" : r.matchType;
+                          const driverDisplayName = hasOverride ? members[overrideMap[overrideKey]]?.displayName
+                            : hasLink ? members[linkMap[r.custId]]?.displayName
+                            : r.name;
+                          return (
+                            <div key={di} style={{ display: "flex", gap: 6, alignItems: "center", padding: "3px 6px", borderRadius: 3 }}>
+                              <span style={{ fontSize: 11, fontFamily: "monospace", color: r.position <= 3 ? C.elo : C.textDim, fontWeight: 700, minWidth: 24, textAlign: "right" }}>P{r.position}</span>
+                              <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, fontWeight: 700, fontFamily: "monospace", background: (matchColor[effectiveMatch] || C.owned) + "22", color: matchColor[effectiveMatch] || C.owned }}>{matchLabel[effectiveMatch] || "ok"}</span>
+                              <span style={{ fontSize: 12, flex: 1 }}>
+                                {driverDisplayName}
+                                {r.iracingName !== driverDisplayName && <span style={{ fontSize: 10, color: C.textDim, marginLeft: 6 }}>({r.iracingName})</span>}
+                              </span>
+                              {r.matchType === "unmatched" && !hasLink && !hasOverride && (
+                                <select onChange={e => handleLink(r.custId, e.target.value)} value="" style={{ ...inp, padding: "2px 6px", fontSize: 10, width: 130 }}>
+                                  <option value="">Link to member...</option>
+                                  {memberOptions.map(m => <option key={m.uid} value={m.uid}>{m.name}</option>)}
+                                </select>
+                              )}
+                              {hasLink && !hasOverride && <button onClick={() => handleLink(r.custId, "")} style={{ ...mbtn, fontSize: 9, color: C.danger }}>unlink</button>}
+                              {r.matchType !== "unmatched" && !hasOverride && (
+                                <select onChange={e => { if (e.target.value) setOverrideMap(prev => ({ ...prev, [overrideKey]: e.target.value })); }} value="" style={{ ...inp, padding: "2px 6px", fontSize: 10, width: 110 }}>
+                                  <option value="">reassign...</option>
+                                  {memberOptions.map(m => <option key={m.uid} value={m.uid}>{m.name}</option>)}
+                                </select>
+                              )}
+                              {hasOverride && <button onClick={() => setOverrideMap(prev => { const next = { ...prev }; delete next[overrideKey]; return next; })} style={{ ...mbtn, fontSize: 9, color: C.danger }}>undo</button>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+
+            {error && <div style={{ color: C.danger, fontSize: 12, marginBottom: 8, whiteSpace: "pre-line" }}>{error}</div>}
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+              <button onClick={onClose} style={{ ...mbtn, color: C.textMuted }}>Cancel</button>
+              <button onClick={handleImport} disabled={importing} style={{ ...btnP, opacity: importing ? 0.5 : 1 }}>
+                {importing ? "Importing..." : `Import ${totalRaces} Race${totalRaces !== 1 ? "s" : ""}`}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
