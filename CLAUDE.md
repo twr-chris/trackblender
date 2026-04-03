@@ -29,6 +29,7 @@ src/
     shared.js          — Color constants, category definitions, shared style objects
     solver.js          — Branch-and-bound purchase optimizer
     parser.js          — iRacing paste parser + track name alias map
+    elo.js             — Multi-player ELO calculation (pairwise algorithm)
   components/
     shared.jsx         — Reusable UI atoms: CatTags, Badges, StatCard, Empty
     auth.jsx           — SignIn, CreateLeague, Claim, FullScreen, UserName
@@ -36,8 +37,9 @@ src/
     Schedule.jsx       — Season schedule builder
     BuyRecs.jsx        — Purchase optimizer UI + best-value recommendations
     Stats.jsx          — Overview / stats dashboard
+    Elo.jsx            — ELO tab: standings, race results, settings
     Editor.jsx         — Track editor (admin-only)
-    LeagueAdmin.jsx    — Admin panel (member management, permissions)
+    LeagueAdmin.jsx    — Admin panel (member management, permissions, driver aliases)
     ImportModal.jsx    — iRacing track paste importer
 ```
 
@@ -48,11 +50,14 @@ The codebase was originally a single-file monolith (App.jsx at ~1,340 lines). It
 ```
 leagues/{leagueId}/
   data/
-    config    — { name, adminUids[], createdAt }
-    tracks    — { list: [...track objects] }
-    schedule  — { rounds: [...track names] }
+    config      — { name, adminUids[], createdAt }
+    tracks      — { list: [...track objects] }
+    schedule    — { rounds: [...track names] }
+    eloRatings  — { ratings: {driverKey: {elo, racesPlayed}}, kFactor, lastCalculatedAt }
   members/
-    {uid}     — { displayName, email, ownership: {trackName: status}, racing: bool, joinedAt }
+    {uid}       — { displayName, email, ownership: {trackName: status}, aliases: string[], racing: bool, joinedAt }
+  races/
+    {autoId}    — { date, raceNumber, trackName, season, raceClass, results: [{driverKey, name, position}], createdAt }
 ```
 
 `leagueId` is currently `"default"`. The namespace exists to support multi-tenancy later without a data migration.
@@ -62,6 +67,10 @@ leagues/{leagueId}/
 - Track ownership statuses: `"owned"`, `"unowned"`, `"buy"` (set by the optimizer only, never by manual toggle)
 - Each track object: `{ name, cats: string[], configs: number|null, free: boolean }`
 - The `racing` flag on members controls inclusion in calculations. Non-racing members appear dimmed in the grid but are excluded from the optimizer, schedule builder counts, and buy recommendations.
+- The `aliases` array on members stores alternative driver names (e.g. "Johnny B" for "John Baker"), used for resolving pasted race results to the correct member.
+- Race results reference TB members by UID (`driverKey`). Non-TB drivers use `"ext_" + slugified-name` as their key — these are "dangling" until linked to a member.
+- `raceClass` is optional — used for multi-class seasons (e.g. "GT3", "GT4"). Each class in a multi-class race is stored as a separate race record sharing the same date and raceNumber.
+- Races are ordered by `date → raceNumber → raceClass`. Two scored races per night means raceNumber 1 and 2, with class distinguishing within-race splits.
 
 ## Real-Time Sync
 
@@ -72,7 +81,7 @@ All data syncs via Firestore `onSnapshot` listeners. A `pendingWrites` guard pre
 - First user to sign in creates the league and becomes admin.
 - Members can edit their own ownership column and rename themselves.
 - Admins can edit any member's data, manage the schedule, edit tracks, and administer the league.
-- Firestore security rules enforce this — members can only write their own document, admins can write anything. The `isAdmin` check reads the config document (costs one extra Firestore read per write, negligible at this scale).
+- Firestore security rules enforce this — members can only write their own document, admins can write anything. Race records (`races` subcollection) are admin-only for writes. The `isAdmin` check reads the config document (costs one extra Firestore read per write, negligible at this scale).
 - The Firebase API key in source is intentionally public — it's a client-side project identifier, not a secret. Security comes from Firestore rules.
 
 ## Key Design Decisions and Their Rationale
@@ -94,6 +103,14 @@ The import modal resets the target member's ownership to only include tracks fou
 ### Monolith-first, refactor when it hurts
 
 The app was built as a single file and only split into modules when editing friction became real (str_replace collisions, difficulty navigating 1,300+ lines). The refactor trigger was a feature that touched three tabs simultaneously. This was a deliberate sequencing choice — architecture follows need, not anticipation.
+
+### Pairwise multi-player ELO
+
+The ELO system treats each race as N*(N-1)/2 pairwise matchups. For each pair, the higher finisher "wins" (score 1) and the lower finisher "loses" (score 0). Ties get 0.5 each. K-factor is normalized by dividing by (N-1) so the total ELO swing per race stays roughly constant regardless of field size. Deltas are accumulated across all pairs per race, then batch-applied — this prevents pair-processing order from affecting results.
+
+ELO is unified across classes and seasons. A driver who races GT3 in one season and GT4 in the next carries one rating. This is intentional — one of the primary use cases is making class bucketing decisions at the start of a season.
+
+ELO calculation is triggered manually by an admin ("Calculate ELO" button), not computed on the fly. This keeps writes minimal and lets the admin control when ratings update. Race records are the source of truth; ratings can always be recalculated from scratch.
 
 ### No backend server
 
