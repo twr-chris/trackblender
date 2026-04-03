@@ -18,8 +18,8 @@ If you, like me, find maintaining infrastructure tedious, please delight in this
 - **Buy Recommendations** — Per-member best-value purchase suggestions based on proximity to full league coverage.
 - **Overview** — Stats dashboard: universal tracks, one-away tracks, member library sizes, racing/non-racing breakdown.
 - **Track Editor** (admin) — Add/remove/edit tracks with multi-category tags (road, oval, dirt-oval, dirt-road), configuration counts, and free-with-membership flags. Reset to iRacing defaults at any time.
-- **League ELO** — Enter race results with a drag-to-position UI (drag drivers from an available pool into finish order). Supports multi-class seasons, same-night double headers, and external (non-member) drivers. On-demand ELO calculation using a pairwise multi-player algorithm with tunable K-factor. Standings table with ratings, race count, and member/external indicators. Admin can link external drivers to members once they join.
-- **League Admin** (admin) — Manage admins, toggle racing/not-racing status, set driver aliases for race result matching, view member emails and UIDs (for de-duplication), remove members. Sortable by join date or name.
+- **League ELO** — Enter race results manually with a drag-to-position UI, or bulk-import from iRacing event result JSON files (multi-file, multi-class). Automatic driver resolution via iRacing customer ID, aliases, and display name. Supports virtual members for shared-pod/local drivers with seasonal identity mapping. On-demand ELO calculation using a pairwise multi-player algorithm with tunable K-factor. Standings with provisional filtering, race history grouped by season, and admin tools for linking external drivers.
+- **League Admin** (admin) — Manage admins, toggle racing/not-racing status, set driver aliases and iRacing customer IDs for race result matching, create virtual members for local/pod drivers, view member emails and UIDs (for de-duplication), remove members. Sortable by join date or name.
 - **Self-service rename** — Any member can change their driver name by clicking their name in the header.
 
 ## How It Works
@@ -155,7 +155,7 @@ leagues/{leagueId}/
     schedule    — { rounds: [...track names], updatedAt }
     eloRatings  — { ratings: {driverKey: {elo, racesPlayed}}, kFactor, lastCalculatedAt }
   members/
-    {uid}       — { displayName, email, ownership: {trackName: status}, aliases: string[], racing: bool, joinedAt, updatedAt }
+    {uid}       — { displayName, email, ownership: {trackName: status}, aliases: string[], iracingCustId: string?, virtual: bool?, racing: bool, joinedAt, updatedAt }
   races/
     {autoId}    — { date, raceNumber, trackName, season, raceClass, results: [{driverKey, name, position}], createdAt }
 ```
@@ -203,6 +203,7 @@ src/
     solver.js          — Branch-and-bound purchase optimizer
     parser.js          — iRacing paste parser + track name alias map
     elo.js             — Multi-player ELO calculation (pairwise algorithm)
+    iracing-parser.js  — iRacing event result JSON parser (driver resolution, multi-class)
   components/
     shared.jsx         — Reusable UI atoms: CatTags, Badges, StatCard, Empty
     auth.jsx           — SignIn, CreateLeague, Claim, FullScreen, UserName
