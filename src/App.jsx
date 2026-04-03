@@ -222,7 +222,7 @@ export default function App() {
         {tab === "schedule" && <Schedule data={data} save={save} names={trackNames} map={trackMap} isAdmin={isAdmin} />}
         {tab === "buy" && <BuyRecs data={data} save={save} names={trackNames} map={trackMap} />}
         {tab === "stats" && <Stats data={data} names={trackNames} map={trackMap} />}
-        {tab === "elo" && <Elo races={races} eloRatings={eloRatings} members={members} nameByUid={nameByUid} isAdmin={isAdmin} addRace={addRace} setRace={setRace} deleteRace={deleteRace} setEloRatings={setEloRatings} persist={persist} trackNames={trackNames} />}
+        {tab === "elo" && <Elo races={races} eloRatings={eloRatings} members={members} nameByUid={nameByUid} isAdmin={isAdmin} addRace={addRace} setRace={setRace} deleteRace={deleteRace} setEloRatings={setEloRatings} persist={persist} trackNames={trackNames} currentUid={user?.uid} />}
         {tab === "trackeditor" && isAdmin && <Editor tracks={tracks} save={saveTracksFn} />}
         {tab === "leagueadmin" && isAdmin && <LeagueAdmin config={config} members={members} nameByUid={nameByUid} />}
       </div>

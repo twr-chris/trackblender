@@ -37,7 +37,7 @@ function classColor(name) {
   return CLASS_PALETTE[Math.abs(h) % CLASS_PALETTE.length];
 }
 
-export function Elo({ races, eloRatings, members, nameByUid, isAdmin, addRace, setRace, deleteRace, setEloRatings, persist, trackNames }) {
+export function Elo({ races, eloRatings, members, nameByUid, isAdmin, addRace, setRace, deleteRace, setEloRatings, persist, trackNames, currentUid }) {
   const [view, setView] = useState("standings"); // standings | races | settings
   const [expandedRace, setExpandedRace] = useState(null);
   const [seasonFilter, setSeasonFilter] = useState("all");
@@ -135,6 +135,7 @@ export function Elo({ races, eloRatings, members, nameByUid, isAdmin, addRace, s
   const subTabs = [
     { id: "standings", label: "Standings" },
     { id: "races", label: "Race Results" },
+    { id: "mystats", label: "My Stats" },
     ...(isAdmin ? [{ id: "settings", label: "Settings" }] : []),
   ];
 
@@ -156,6 +157,7 @@ export function Elo({ races, eloRatings, members, nameByUid, isAdmin, addRace, s
 
       {view === "standings" && <StandingsView standings={standings} eloRatings={eloRatings} raceCount={raceList.length} isAdmin={isAdmin} members={members} races={races} setRace={setRace} nameByUid={nameByUid} />}
       {view === "races" && <RacesView races={filteredRaces} seasons={seasons} classes={classes} seasonFilter={seasonFilter} setSeasonFilter={setSeasonFilter} classFilter={classFilter} setClassFilter={setClassFilter} expandedRace={expandedRace} setExpandedRace={setExpandedRace} isAdmin={isAdmin} showAddForm={showAddForm} setShowAddForm={setShowAddForm} members={members} knownNames={knownNames} resolveDriver={resolveDriver} addRace={addRace} deleteRace={deleteRace} setRace={setRace} nameByUid={nameByUid} eloRatings={eloRatings} trackNames={trackNames} />}
+      {view === "mystats" && <MyStatsView currentUid={currentUid} races={raceList} eloRatings={eloRatings} nameByUid={nameByUid} />}
       {view === "settings" && isAdmin && <SettingsView eloRatings={eloRatings} handleCalculate={handleCalculate} raceCount={raceList.length} />}
     </div>
   );
@@ -857,6 +859,227 @@ function ImportRaceModal({ members, addRace, onClose }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── My Stats ───
+function MyStatsView({ currentUid, races, eloRatings, nameByUid }) {
+  const [selectedUid, setSelectedUid] = useState(currentUid);
+
+  // All drivers who have at least one race result
+  const driversWithRaces = useMemo(() => {
+    const seen = new Set();
+    for (const r of races) {
+      for (const res of r.results || []) seen.add(res.driverKey);
+    }
+    return [...seen]
+      .map(key => ({ key, name: nameByUid[key] || (key.startsWith("ext_") ? key.replace("ext_", "").replace(/-/g, " ") : key) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [races, nameByUid]);
+
+  // If selectedUid has no races (e.g. current user never raced), stay on their uid
+  // so they see the empty state — unless they pick someone from the dropdown
+  const activeUid = selectedUid;
+
+  const myRaces = useMemo(() => {
+    const entries = [];
+    for (const r of races) {
+      const me = (r.results || []).find(res => res.driverKey === activeUid);
+      if (me) {
+        entries.push({ date: r.date, trackName: r.trackName, position: me.position, fieldSize: r.results.length, raceClass: r.raceClass, season: r.season });
+      }
+    }
+    return entries.reverse(); // newest first (races already sorted oldest-first)
+  }, [races, activeUid]);
+
+  const stats = useMemo(() => {
+    if (myRaces.length === 0) return null;
+    const positions = myRaces.map(r => r.position);
+    return {
+      races: myRaces.length,
+      wins: positions.filter(p => p === 1).length,
+      podiums: positions.filter(p => p <= 3).length,
+      avgFinish: (positions.reduce((a, b) => a + b, 0) / positions.length).toFixed(1),
+      bestFinish: Math.min(...positions),
+    };
+  }, [myRaces]);
+
+  const seasonStats = useMemo(() => {
+    const byS = {};
+    for (const r of myRaces) {
+      const s = r.season || "Unsorted";
+      if (!byS[s]) byS[s] = [];
+      byS[s].push(r.position);
+    }
+    return Object.entries(byS).map(([season, positions]) => ({
+      season,
+      races: positions.length,
+      wins: positions.filter(p => p === 1).length,
+      podiums: positions.filter(p => p <= 3).length,
+      avgFinish: (positions.reduce((a, b) => a + b, 0) / positions.length).toFixed(1),
+      bestFinish: Math.min(...positions),
+    }));
+  }, [myRaces]);
+
+  const myElo = eloRatings?.ratings?.[activeUid];
+  const driverName = nameByUid[activeUid] || "You";
+
+  const picker = (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+      <select value={activeUid} onChange={e => setSelectedUid(e.target.value)} style={{ ...inp, fontSize: 12, padding: "4px 8px", maxWidth: 220 }}>
+        <option value={currentUid}>{nameByUid[currentUid] || "You"}{currentUid === activeUid ? "" : ""}</option>
+        {driversWithRaces.filter(d => d.key !== currentUid).map(d => (
+          <option key={d.key} value={d.key}>{d.name}</option>
+        ))}
+      </select>
+      {activeUid !== currentUid && (
+        <button onClick={() => setSelectedUid(currentUid)} style={{ ...mbtn, fontSize: 10, padding: "3px 8px" }}>Back to me</button>
+      )}
+    </div>
+  );
+
+  if (myRaces.length === 0) {
+    return (
+      <div>
+        {picker}
+        <Empty icon="📊" title="No Race History" sub={activeUid === currentUid ? "Your finishes will appear here once race results are recorded." : "No races found for this driver."} />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {picker}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 12, marginBottom: 20 }}>
+        <StatCard label="Races" value={stats.races} color={C.accent} />
+        <StatCard label="Wins" value={stats.wins} color={C.elo} />
+        <StatCard label="Podiums" value={stats.podiums} color={C.owned} />
+        <StatCard label="Avg Finish" value={stats.avgFinish} color={C.textMuted} />
+        <StatCard label="Best Finish" value={`P${stats.bestFinish}`} color={C.owned} />
+        {myElo && <StatCard label="ELO" value={Math.round(myElo.elo)} color={myElo.elo >= 1000 ? C.owned : C.danger} />}
+      </div>
+
+      {seasonStats.length > 1 && (
+        <>
+          <div style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, marginBottom: 8 }}>By Season</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 20 }}>
+            <thead>
+              <tr>
+                <th style={thS}>Season</th>
+                <th style={{ ...thS, textAlign: "right" }}>Races</th>
+                <th style={{ ...thS, textAlign: "right" }}>Wins</th>
+                <th style={{ ...thS, textAlign: "right" }}>Podiums</th>
+                <th style={{ ...thS, textAlign: "right" }}>Avg</th>
+                <th style={{ ...thS, textAlign: "right" }}>Best</th>
+              </tr>
+            </thead>
+            <tbody>
+              {seasonStats.map(s => (
+                <tr key={s.season}>
+                  <td style={{ ...tdS, fontSize: 12 }}>{s.season}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "monospace", fontSize: 12 }}>{s.races}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "monospace", fontSize: 12, color: s.wins > 0 ? C.elo : C.textMuted }}>{s.wins}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "monospace", fontSize: 12, color: s.podiums > 0 ? C.owned : C.textMuted }}>{s.podiums}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{s.avgFinish}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "monospace", fontSize: 12, color: C.owned }}>P{s.bestFinish}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      <div style={{ fontSize: 12, fontWeight: 600, color: C.textMuted, marginBottom: 8 }}>Race History</div>
+      <SeasonRaceGroups myRaces={myRaces} />
+    </div>
+  );
+}
+
+function SeasonRaceGroups({ myRaces }) {
+  const hasClass = myRaces.some(r => r.raceClass);
+
+  // Group races by season, preserve order (newest first)
+  const groups = useMemo(() => {
+    const map = new Map();
+    for (const r of myRaces) {
+      const s = r.season || "Unsorted";
+      if (!map.has(s)) map.set(s, []);
+      map.get(s).push(r);
+    }
+    return [...map.entries()].map(([season, races]) => ({ season, races }));
+  }, [myRaces]);
+
+  // Most recent season starts expanded, others collapsed
+  const [open, setOpen] = useState(() => {
+    const s = new Set();
+    if (groups.length > 0) s.add(groups[0].season);
+    return s;
+  });
+
+  const toggle = (season) => setOpen(prev => {
+    const next = new Set(prev);
+    next.has(season) ? next.delete(season) : next.add(season);
+    return next;
+  });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {groups.map(g => {
+        const expanded = open.has(g.season);
+        const positions = g.races.map(r => r.position);
+        const wins = positions.filter(p => p === 1).length;
+        const avg = (positions.reduce((a, b) => a + b, 0) / positions.length).toFixed(1);
+        return (
+          <div key={g.season} style={{ border: `1px solid ${C.border}`, borderRadius: 6, overflow: "hidden" }}>
+            <button onClick={() => toggle(g.season)} style={{
+              width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "8px 12px",
+              background: expanded ? C.eloBg : "transparent", border: "none", cursor: "pointer",
+              fontFamily: "inherit", textAlign: "left",
+            }}>
+              <span style={{ fontSize: 10, color: C.textDim, width: 14 }}>{expanded ? "\u25BC" : "\u25B6"}</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.text, flex: 1 }}>{g.season}</span>
+              <span style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>
+                {g.races.length}R{wins > 0 && <span style={{ color: C.elo, marginLeft: 6 }}>{wins}W</span>}
+                <span style={{ marginLeft: 6 }}>avg P{avg}</span>
+              </span>
+            </button>
+            {expanded && (
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={thS}>Date</th>
+                    <th style={thS}>Track</th>
+                    <th style={{ ...thS, textAlign: "center" }}>Finish</th>
+                    {hasClass && <th style={thS}>Class</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {g.races.map((r, i) => {
+                    const posColor = r.position === 1 ? C.elo : r.position <= 3 ? C.owned : C.text;
+                    const cc = r.raceClass ? classColor(r.raceClass) : null;
+                    return (
+                      <tr key={i}>
+                        <td style={{ ...tdS, fontFamily: "monospace", fontSize: 12, color: C.textMuted }}>{displayDate(r.date)}</td>
+                        <td style={{ ...tdS, fontSize: 13 }}>{r.trackName}</td>
+                        <td style={{ ...tdS, textAlign: "center", fontFamily: "monospace", fontWeight: 700, fontSize: 13, color: posColor }}>
+                          P{r.position}<span style={{ fontWeight: 400, fontSize: 11, color: C.textDim }}> / {r.fieldSize}</span>
+                        </td>
+                        {hasClass && (
+                          <td style={tdS}>
+                            {cc && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, fontWeight: 600, background: cc.bg, color: cc.fg }}>{r.raceClass}</span>}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
