@@ -114,6 +114,35 @@ export function LeagueAdmin({ config, members, nameByUid }) {
       <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 4, color: C.admin }}>League Administration</h3>
       <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 20 }}>{config?.name}</p>
 
+      <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>League Logo</h4>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 30 }}>
+        {config?.logoUrl
+          ? <img src={config.logoUrl} style={{ width: 48, height: 48, borderRadius: 8, objectFit: "cover" }} alt="" />
+          : <div style={{ width: 48, height: 48, background: `linear-gradient(135deg, ${C.accent}, #f59e0b)`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 800, color: "#fff" }}>T</div>}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <input type="file" accept="image/*" onChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            // Resize to 128x128 and encode as data URL
+            const img = new Image();
+            img.onload = async () => {
+              const size = 128;
+              const canvas = document.createElement("canvas");
+              canvas.width = size; canvas.height = size;
+              const ctx = canvas.getContext("2d");
+              // Cover-crop: scale to fill, center
+              const scale = Math.max(size / img.width, size / img.height);
+              const w = img.width * scale, h = img.height * scale;
+              ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+              const dataUrl = canvas.toDataURL("image/png");
+              await setConfig({ logoUrl: dataUrl });
+            };
+            img.src = URL.createObjectURL(file);
+          }} style={{ fontSize: 11, color: C.text }} />
+          {config?.logoUrl && <button onClick={() => setConfig({ logoUrl: null })} style={{ ...mbtn, color: C.danger, fontSize: 10 }}>Remove logo</button>}
+        </div>
+      </div>
+
       <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Admins</h4>
       <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 16 }}>
         {adminUids.map(uid => (

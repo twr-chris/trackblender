@@ -193,7 +193,9 @@ export default function App() {
       {/* Header */}
       <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ width: 36, height: 36, background: `linear-gradient(135deg, ${C.accent}, #f59e0b)`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, color: "#fff" }}>T</div>
+          {config?.logoUrl
+            ? <img src={config.logoUrl} style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover" }} alt="" />
+            : <div style={{ width: 36, height: 36, background: `linear-gradient(135deg, ${C.accent}, #f59e0b)`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, color: "#fff" }}>T</div>}
           <div>
             <div style={{ fontSize: 15, fontWeight: 700 }}>{config?.name || "TrackBlender"}</div>
             <div style={{ fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>{racingNames.length}/{memberNames.length} racing · {trackNames.length} tracks</div>
