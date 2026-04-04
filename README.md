@@ -3,7 +3,7 @@
 iRacing league track ownership manager. Helps leagues figure out which tracks everyone owns, plan season schedules, optimize purchases, and manage members — all with real-time sync and Google sign-in. TrackBlender is developed to support Tongiht We Race, Seattle's Secret Underground Racing Laboratory. Build-from-scratch capability is not expected until v1.0 is committed, so play around at your own risk.
 
 - https://www.tonightwerace.gg
-- https://https://discord.gg/A5BbadESjK
+- https://discord.gg/A5BbadESjK
 
 ## The Laziest League Admin
 
@@ -16,9 +16,11 @@ If you, like me, find maintaining infrastructure tedious, please delight in this
 - **Schedule Builder** — Build a season from tracks with the best ownership overlap. Counts both owned and "buy" states, so you can plan off the optimizer's hypothetical purchases. Filter by category, minimum owners, and free/paid. Admin-only for edits; all members can view.
 - **Purchase Optimizer** — Greedy solver that maximizes tracks promotable to universal ownership within a per-member buy limit. Supports "force buy" tracks that must be included regardless of efficiency. Results are written as buy states visible across the app.
 - **Buy Recommendations** — Per-member best-value purchase suggestions based on proximity to full league coverage.
-- **Overview** — Stats dashboard: universal tracks, one-away tracks, member library sizes, racing/non-racing breakdown.
-- **Track Editor** (admin) — Add/remove/edit tracks with multi-category tags (road, oval, dirt-oval, dirt-road), configuration counts, and free-with-membership flags. Reset to iRacing defaults at any time.
+- **League Overview** — Landing page with league-wide stats: member count, races logged, estimated hours driven, ELO leaderboard (top 5), recent races, most raced tracks, and per-season summary.
 - **League ELO** — Enter race results manually with a drag-to-position UI, or bulk-import from iRacing event result JSON files (multi-file, multi-class). Automatic driver resolution via iRacing customer ID, aliases, and display name. Supports virtual members for shared-pod/local drivers with seasonal identity mapping. On-demand ELO calculation using a pairwise multi-player algorithm with tunable K-factor. Standings with provisional filtering, race history grouped by season, and admin tools for linking external drivers.
+- **My Stats** — Personal driver stats under the ELO tab: lifetime summary (races, wins, podiums, avg/best finish, ELO), per-season rollup, and collapsible season-grouped race history. Driver picker lets you view any league member's stats.
+- **Ownership Overview** (admin) — Stats dashboard: universal tracks, one-away tracks, member library sizes, racing/non-racing breakdown.
+- **Track Editor** (admin) — Add/remove/edit tracks with multi-category tags (road, oval, dirt-oval, dirt-road), configuration counts, and free-with-membership flags. Reset to iRacing defaults at any time.
 - **League Admin** (admin) — Manage admins, toggle racing/not-racing status, set driver aliases and iRacing customer IDs for race result matching, create virtual members for local/pod drivers, view member emails and UIDs (for de-duplication), remove members. Sortable by join date or name.
 - **League Logo** (admin) — Upload a custom logo that replaces the default icon in the header. Image is resized client-side and stored in Firestore as a base64 data URL.
 - **Self-service rename** — Any member can change their driver name by clicking their name in the header.
@@ -178,7 +180,7 @@ Members can bulk-import their track ownership by pasting text from the iRacing c
 
 The import is destructive — it resets the target member's ownership to only include tracks found in the paste. This is intentional: the iRacing client is the source of truth for what someone owns.
 
-If new track name mismatches are discovered, add them to the `TRACK_ALIASES` map in `App.jsx`.
+If new track name mismatches are discovered, add them to the `TRACK_ALIASES` map in `src/lib/parser.js`.
 
 ## Local Development
 
@@ -211,8 +213,9 @@ src/
     Grid.jsx           — Ownership grid + toggle logic
     Schedule.jsx       — Season schedule builder
     BuyRecs.jsx        — Purchase optimizer UI + best-value recommendations
-    Stats.jsx          — Overview / stats dashboard
-    Elo.jsx            — ELO tab: standings, race results, settings
+    LeagueOverview.jsx — League overview: league-wide stats, ELO leaderboard, recent races
+    Stats.jsx          — Ownership overview / stats dashboard (admin-only)
+    Elo.jsx            — ELO tab: standings, race results, my stats, settings
     Editor.jsx         — Track editor (admin-only)
     LeagueAdmin.jsx    — Admin panel (member management, permissions, driver aliases)
     ImportModal.jsx    — iRacing track paste importer

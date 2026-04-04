@@ -37,14 +37,15 @@ src/
     Grid.jsx           — Ownership grid + toggle logic
     Schedule.jsx       — Season schedule builder
     BuyRecs.jsx        — Purchase optimizer UI + best-value recommendations
-    Stats.jsx          — Overview / stats dashboard
-    Elo.jsx            — ELO tab: standings, race results, settings
+    LeagueOverview.jsx — League overview: league-wide stats, ELO leaderboard, recent races
+    Stats.jsx          — Ownership overview / stats dashboard (admin-only)
+    Elo.jsx            — ELO tab: standings, race results, my stats, settings
     Editor.jsx         — Track editor (admin-only)
     LeagueAdmin.jsx    — Admin panel (member management, permissions, driver aliases)
     ImportModal.jsx    — iRacing track paste importer
 ```
 
-The codebase was originally a single-file monolith (App.jsx at ~1,340 lines). It was refactored into 16 modules with single responsibilities. No file exceeds ~215 lines. No logic changed during the split — it was a pure structural refactor.
+The codebase was originally a single-file monolith (App.jsx at ~1,340 lines). It was refactored into modules with single responsibilities. No logic changed during the split — it was a pure structural refactor.
 
 ## Firestore Data Model
 
@@ -138,12 +139,6 @@ The track list is stored in Firestore and editable via the Track Editor. The def
 ## Roadmap / Future Directions
 
 These are features that have been discussed or considered, roughly ordered by how fleshed-out the thinking is:
-
-### Driver profile slides (designed, not yet built)
-A workflow where drivers submit a photo and livery image through TrackBlender, an admin reviews composited slides against a template, and approved slides are pushed to a Google Slides seasonal deck via the Slides API. The design calls for: a driver submission form with Firebase Storage for images, an admin review queue with in-browser preview, and Google OAuth scoped to the admin only. A quadrant layout was specced (driver name + number top-left, driver photo top-right, livery bottom-left, league record bottom-right). The record would auto-populate from existing Firestore data; the admin assigns a subtitle tag.
-
-### "Bring a Trailer Challenge" slide generator (designed, not yet built)
-A five-slide reveal sequence for a between-races game segment. Input: two BaT auction URLs. Output: five slides progressing from solo reveal → pair reveal → detail overlay → clean pair → price reveal. The tool would scrape listing data (title, hero image, sale price) and optionally use an LLM to generate spec bullet points. This was explored as a standalone app or a TrackBlender feature — the slide generation pipeline is similar to the driver profile system.
 
 ### Season history / archive
 Snapshot each season's schedule and ownership state. Would enable trend analysis ("you raced Spa three of four seasons") and smarter recommendations.
