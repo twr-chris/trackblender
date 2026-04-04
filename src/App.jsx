@@ -18,6 +18,7 @@ import { Stats } from "./components/Stats.jsx";
 import { Editor } from "./components/Editor.jsx";
 import { LeagueAdmin } from "./components/LeagueAdmin.jsx";
 import { Elo } from "./components/Elo.jsx";
+import { LeagueOverview } from "./components/LeagueOverview.jsx";
 
 export default function App() {
   const [user, setUser] = useState(undefined);
@@ -28,7 +29,7 @@ export default function App() {
   const [races, setRacesState] = useState({});
   const [eloRatings, setEloRatingsState] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState("grid");
+  const [tab, setTab] = useState("league");
   const [saveStatus, setSaveStatus] = useState("");
 
   const pendingWrites = useRef(new Set());
@@ -179,13 +180,13 @@ export default function App() {
   };
 
   const mainTabs = [
+    { id: "league", label: "League Overview", icon: "📊" },
     { id: "grid", label: "Ownership Grid", icon: "🏎️" },
     { id: "schedule", label: "Schedule Builder", icon: "📅" },
     { id: "buy", label: "Buy Recs", icon: "🛒" },
-    { id: "stats", label: "Overview", icon: "📊" },
     { id: "elo", label: "ELO", icon: "🏆" },
   ];
-  const admTabs = isAdmin ? [{ id: "trackeditor", label: "Track Editor", icon: "🔧" }, { id: "leagueadmin", label: "League", icon: "⚙️" }] : [];
+  const admTabs = isAdmin ? [{ id: "stats", label: "Ownership Overview", icon: "📋" }, { id: "trackeditor", label: "Track Editor", icon: "🔧" }, { id: "leagueadmin", label: "League", icon: "⚙️" }] : [];
   const allTabs = [...mainTabs, ...admTabs];
 
   return (
@@ -218,10 +219,11 @@ export default function App() {
       </div>
 
       <div style={{ padding: "20px 24px" }}>
+        {tab === "league" && <LeagueOverview members={members} races={races} eloRatings={eloRatings} nameByUid={nameByUid} config={config} />}
         {tab === "grid" && <Grid data={data} save={save} names={trackNames} map={trackMap} currentUser={myMember?.displayName} isAdmin={isAdmin} />}
         {tab === "schedule" && <Schedule data={data} save={save} names={trackNames} map={trackMap} isAdmin={isAdmin} />}
         {tab === "buy" && <BuyRecs data={data} save={save} names={trackNames} map={trackMap} />}
-        {tab === "stats" && <Stats data={data} names={trackNames} map={trackMap} />}
+        {tab === "stats" && isAdmin && <Stats data={data} names={trackNames} map={trackMap} />}
         {tab === "elo" && <Elo races={races} eloRatings={eloRatings} members={members} nameByUid={nameByUid} isAdmin={isAdmin} addRace={addRace} setRace={setRace} deleteRace={deleteRace} setEloRatings={setEloRatings} persist={persist} trackNames={trackNames} currentUid={user?.uid} />}
         {tab === "trackeditor" && isAdmin && <Editor tracks={tracks} save={saveTracksFn} />}
         {tab === "leagueadmin" && isAdmin && <LeagueAdmin config={config} members={members} nameByUid={nameByUid} />}
