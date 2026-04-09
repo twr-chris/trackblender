@@ -65,6 +65,37 @@ function CustIdEditor({ uid, custId }) {
   );
 }
 
+function IracingLeagueIdEditor({ config }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(config?.iracingLeagueId || "");
+
+  const save = async () => {
+    const trimmed = value.trim();
+    await setConfig({ iracingLeagueId: trimmed ? Number(trimmed) : null });
+    setEditing(false);
+  };
+
+  if (!editing) {
+    return (
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 30 }}>
+        {config?.iracingLeagueId
+          ? <span style={{ fontSize: 13, fontFamily: "monospace", color: C.owned }}>{config.iracingLeagueId}</span>
+          : <span style={{ fontSize: 12, color: C.textDim }}>Not set</span>}
+        <button onClick={() => { setValue(config?.iracingLeagueId || ""); setEditing(true); }} style={{ ...mbtn, fontSize: 10, color: C.elo }}>edit</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 30 }}>
+      <input value={value} onChange={e => setValue(e.target.value)} onKeyDown={e => e.key === "Enter" && save()}
+        placeholder="e.g. 12621" style={{ ...inp, width: 120, fontSize: 12 }} />
+      <button onClick={save} style={btnP}>Save</button>
+      <button onClick={() => setEditing(false)} style={{ ...mbtn, fontSize: 10, color: C.textMuted }}>cancel</button>
+    </div>
+  );
+}
+
 function slugify(s) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
@@ -142,6 +173,10 @@ export function LeagueAdmin({ config, members, nameByUid }) {
           {config?.logoUrl && <button onClick={() => setConfig({ logoUrl: null })} style={{ ...mbtn, color: C.danger, fontSize: 10 }}>Remove logo</button>}
         </div>
       </div>
+
+      <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>iRacing League ID</h4>
+      <p style={{ fontSize: 11, color: C.textMuted, marginBottom: 8 }}>Connect to your iRacing league for direct race result imports.</p>
+      <IracingLeagueIdEditor config={config} />
 
       <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Admins</h4>
       <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 16 }}>

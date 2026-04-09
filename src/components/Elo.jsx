@@ -3,7 +3,7 @@ import { C, inp, btnP, mbtn, thS, tdS } from "../lib/shared.js";
 import { StatCard, Empty } from "./shared.jsx";
 import { calculateElo } from "../lib/elo.js";
 import { parseIracingResult } from "../lib/iracing-parser.js";
-import { setMember } from "../firebase.js";
+import { setMember, fetchLeagueSeasons, fetchSeasonSessions, fetchRaceResult } from "../firebase.js";
 
 function slugify(s) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -156,7 +156,7 @@ export function Elo({ races, eloRatings, members, nameByUid, isAdmin, addRace, s
       </div>
 
       {view === "standings" && <StandingsView standings={standings} eloRatings={eloRatings} raceCount={raceList.length} isAdmin={isAdmin} members={members} races={races} setRace={setRace} nameByUid={nameByUid} />}
-      {view === "races" && <RacesView races={filteredRaces} seasons={seasons} classes={classes} seasonFilter={seasonFilter} setSeasonFilter={setSeasonFilter} classFilter={classFilter} setClassFilter={setClassFilter} expandedRace={expandedRace} setExpandedRace={setExpandedRace} isAdmin={isAdmin} showAddForm={showAddForm} setShowAddForm={setShowAddForm} members={members} knownNames={knownNames} resolveDriver={resolveDriver} addRace={addRace} deleteRace={deleteRace} setRace={setRace} nameByUid={nameByUid} eloRatings={eloRatings} trackNames={trackNames} />}
+      {view === "races" && <RacesView races={filteredRaces} allRaces={raceList} seasons={seasons} classes={classes} seasonFilter={seasonFilter} setSeasonFilter={setSeasonFilter} classFilter={classFilter} setClassFilter={setClassFilter} expandedRace={expandedRace} setExpandedRace={setExpandedRace} isAdmin={isAdmin} showAddForm={showAddForm} setShowAddForm={setShowAddForm} members={members} knownNames={knownNames} resolveDriver={resolveDriver} addRace={addRace} deleteRace={deleteRace} setRace={setRace} nameByUid={nameByUid} eloRatings={eloRatings} trackNames={trackNames} />}
       {view === "mystats" && <MyStatsView currentUid={currentUid} races={raceList} eloRatings={eloRatings} nameByUid={nameByUid} />}
       {view === "settings" && isAdmin && <SettingsView eloRatings={eloRatings} handleCalculate={handleCalculate} raceCount={raceList.length} />}
     </div>
@@ -275,7 +275,7 @@ function LinkDriverButton({ driverKey, driverName, members, races, setRace, name
 }
 
 // ─── Race Results ───
-function RacesView({ races, seasons, classes, seasonFilter, setSeasonFilter, classFilter, setClassFilter, expandedRace, setExpandedRace, isAdmin, showAddForm, setShowAddForm, members, knownNames, resolveDriver, addRace, deleteRace, setRace, nameByUid, eloRatings, trackNames }) {
+function RacesView({ races, allRaces, seasons, classes, seasonFilter, setSeasonFilter, classFilter, setClassFilter, expandedRace, setExpandedRace, isAdmin, showAddForm, setShowAddForm, members, knownNames, resolveDriver, addRace, deleteRace, setRace, nameByUid, eloRatings, trackNames }) {
   const [showImport, setShowImport] = useState(false);
   const [collapsedSeasons, setCollapsedSeasons] = useState({}); // season → bool
 
@@ -318,7 +318,7 @@ function RacesView({ races, seasons, classes, seasonFilter, setSeasonFilter, cla
       </div>
 
       {showAddForm && isAdmin && <AddRaceForm members={members} knownNames={knownNames} resolveDriver={resolveDriver} addRace={addRace} onDone={() => setShowAddForm(false)} eloRatings={eloRatings} trackNames={trackNames} />}
-      {showImport && isAdmin && <ImportRaceModal members={members} addRace={addRace} onClose={() => setShowImport(false)} />}
+      {showImport && isAdmin && <ImportRaceModal members={members} addRace={addRace} onClose={() => setShowImport(false)} races={allRaces} />}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {Object.entries(racesBySeason).map(([seasonName, seasonRaces]) => {
@@ -631,8 +631,9 @@ function AddRaceForm({ members, knownNames, resolveDriver, addRace, onDone, eloR
   );
 }
 
-// ─── iRacing JSON Import Modal (multi-file) ───
-function ImportRaceModal({ members, addRace, onClose }) {
+// ─── iRacing JSON Import Modal (multi-file + API fetch) ───
+function ImportRaceModal({ members, addRace, onClose, races: existingRaces }) {
+  const [source, setSource] = useState("file"); // "file" | "api"
   const [events, setEvents] = useState([]); // [{ parsed, raceNumber, fileName }]
   const [error, setError] = useState("");
   const [season, setSeason] = useState("");
@@ -641,6 +642,14 @@ function ImportRaceModal({ members, addRace, onClose }) {
   const [overrideMap, setOverrideMap] = useState({}); // "eventIdx-raceIdx-driverIdx" → uid
   const [collapsedEvents, setCollapsedEvents] = useState({});
   const [forceSingleClass, setForceSingleClass] = useState(false);
+
+  // API fetch state
+  const [apiSeasons, setApiSeasons] = useState(null);
+  const [apiSelectedSeason, setApiSelectedSeason] = useState(null);
+  const [apiSessions, setApiSessions] = useState(null);
+  const [apiSelectedSessions, setApiSelectedSessions] = useState(new Set());
+  const [apiLoading, setApiLoading] = useState("");
+  const [apiSeasonName, setApiSeasonName] = useState("");
 
   const handleFiles = async (e) => {
     const files = [...(e.target.files || [])];
@@ -670,6 +679,77 @@ function ImportRaceModal({ members, addRace, onClose }) {
     }
     setEvents(results);
   };
+
+  // API fetch handlers
+  const loadSeasons = async () => {
+    setApiLoading("Loading seasons...");
+    setError("");
+    try {
+      const data = await fetchLeagueSeasons();
+      setApiSeasons((data.seasons || []).sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0) || b.season_id - a.season_id));
+    } catch (err) {
+      setError(err.message || "Failed to load seasons");
+    }
+    setApiLoading("");
+  };
+
+  const loadSessions = async (seasonId, seasonName) => {
+    setApiLoading("Loading sessions...");
+    setError("");
+    setApiSelectedSeason(seasonId);
+    setApiSeasonName(seasonName);
+    try {
+      const data = await fetchSeasonSessions(seasonId);
+      const sessions = (data.sessions || data || []).filter(s => s.has_results);
+      // Check which are already imported by matching date + track
+      const existingKeys = new Set(Object.values(existingRaces || {}).map(r => `${displayDate(r.date)}|${r.trackName}`));
+      const annotated = sessions.map(s => ({
+        ...s,
+        alreadyImported: existingKeys.has(`${displayDate(s.launch_at)}|${s.track?.track_name}`),
+      }));
+      setApiSessions(annotated);
+      // Default: select sessions not yet imported
+      setApiSelectedSessions(new Set(annotated.filter(s => !s.alreadyImported).map(s => s.subsession_id)));
+    } catch (err) {
+      setError(err.message || "Failed to load sessions");
+    }
+    setApiLoading("");
+  };
+
+  const fetchSelectedResults = async () => {
+    if (apiSelectedSessions.size === 0) return;
+    setApiLoading(`Fetching ${apiSelectedSessions.size} race(s)...`);
+    setError("");
+    const results = [];
+    const sessionsToFetch = (apiSessions || []).filter(s => apiSelectedSessions.has(s.subsession_id));
+    for (const sess of sessionsToFetch) {
+      try {
+        const json = await fetchRaceResult(sess.subsession_id);
+        const result = parseIracingResult(json, members);
+        if (result.error) { setError(prev => prev ? prev + "\n" + sess.track?.track_name + ": " + result.error : sess.track?.track_name + ": " + result.error); continue; }
+        if (result.races.length === 0) continue;
+        results.push({ parsed: result, raceNumber: 1, fileName: `API: ${sess.track?.track_name}` });
+      } catch (err) {
+        setError(prev => prev ? prev + "\n" + (sess.track?.track_name || "?") + ": " + err.message : (sess.track?.track_name || "?") + ": " + err.message);
+      }
+    }
+    results.sort((a, b) => (a.parsed.date || "").localeCompare(b.parsed.date || ""));
+    const dateCounts = {};
+    for (const r of results) {
+      const d = displayDate(r.parsed.date);
+      dateCounts[d] = (dateCounts[d] || 0) + 1;
+      r.raceNumber = dateCounts[d];
+    }
+    setSeason(apiSeasonName);
+    setEvents(results);
+    setApiLoading("");
+  };
+
+  const toggleSession = (subId) => setApiSelectedSessions(prev => {
+    const next = new Set(prev);
+    next.has(subId) ? next.delete(subId) : next.add(subId);
+    return next;
+  });
 
   const setEventRaceNumber = (i, n) => setEvents(prev => prev.map((ev, j) => j === i ? { ...ev, raceNumber: n } : ev));
 
@@ -768,8 +848,92 @@ function ImportRaceModal({ members, addRace, onClose }) {
 
         {events.length === 0 ? (
           <div>
-            <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>Select one or more iRacing event result JSON files.</p>
-            <input type="file" accept=".json" multiple onChange={handleFiles} style={{ fontSize: 13, color: C.text, marginBottom: 12 }} />
+            {/* Source toggle */}
+            <div style={{ display: "flex", gap: 2, marginBottom: 16 }}>
+              {[{ id: "file", label: "From Files" }, { id: "api", label: "From iRacing API" }].map(t => (
+                <button key={t.id} onClick={() => { setSource(t.id); setError(""); }} style={{
+                  padding: "5px 12px", fontSize: 11, fontWeight: source === t.id ? 600 : 400,
+                  background: source === t.id ? C.freeBg : "transparent", color: source === t.id ? C.free : C.textMuted,
+                  border: `1px solid ${source === t.id ? C.free : C.border}`, borderRadius: 5,
+                  cursor: "pointer", fontFamily: "inherit",
+                }}>{t.label}</button>
+              ))}
+            </div>
+
+            {source === "file" && (
+              <div>
+                <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>Select one or more iRacing event result JSON files.</p>
+                <input type="file" accept=".json" multiple onChange={handleFiles} style={{ fontSize: 13, color: C.text, marginBottom: 12 }} />
+              </div>
+            )}
+
+            {source === "api" && (
+              <div>
+                {/* Step 1: Load seasons */}
+                {!apiSeasons && !apiLoading && (
+                  <div>
+                    <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>Pull race results directly from iRacing.</p>
+                    <button onClick={loadSeasons} style={btnP}>Load Seasons</button>
+                  </div>
+                )}
+
+                {/* Step 2: Pick a season */}
+                {apiSeasons && !apiSelectedSeason && (
+                  <div>
+                    <p style={{ fontSize: 12, color: C.textMuted, marginBottom: 8 }}>Select a season:</p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {apiSeasons.map(s => (
+                        <button key={s.season_id} onClick={() => loadSessions(s.season_id, s.season_name)} style={{
+                          display: "flex", justifyContent: "space-between", alignItems: "center",
+                          padding: "8px 12px", background: C.surface, border: `1px solid ${C.border}`, borderRadius: 6,
+                          cursor: "pointer", fontFamily: "inherit", textAlign: "left",
+                        }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{s.season_name}</span>
+                          <span style={{ fontSize: 10, color: s.active ? C.owned : C.textDim, fontFamily: "monospace" }}>{s.active ? "active" : "retired"}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 3: Pick sessions */}
+                {apiSessions && (
+                  <div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{apiSeasonName}</span>
+                      <button onClick={() => { setApiSelectedSeason(null); setApiSessions(null); }} style={{ ...mbtn, fontSize: 10, color: C.elo }}>back</button>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 12 }}>
+                      {apiSessions.map(s => {
+                        const selected = apiSelectedSessions.has(s.subsession_id);
+                        const dimmed = s.alreadyImported;
+                        return (
+                          <label key={s.subsession_id} style={{
+                            display: "flex", gap: 8, alignItems: "center", padding: "6px 10px",
+                            background: dimmed ? "rgba(255,255,255,0.02)" : C.surface,
+                            border: `1px solid ${selected ? C.free : C.border}`, borderRadius: 5,
+                            opacity: dimmed && !selected ? 0.5 : 1, cursor: "pointer", userSelect: "none",
+                          }}>
+                            <input type="checkbox" checked={selected} onChange={() => toggleSession(s.subsession_id)} />
+                            <span style={{ fontSize: 11, fontFamily: "monospace", color: C.textDim }}>{displayDate(s.launch_at)}</span>
+                            <span style={{ fontSize: 12, flex: 1 }}>{s.track?.track_name}</span>
+                            <span style={{ fontSize: 10, fontFamily: "monospace", color: C.textDim }}>{s.race_length}min</span>
+                            {s.winner_name && <span style={{ fontSize: 10, color: C.elo }}>W: {s.winner_name}</span>}
+                            {dimmed && <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, fontFamily: "monospace", background: C.ownedBg, color: C.owned }}>imported</span>}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <button onClick={fetchSelectedResults} disabled={apiSelectedSessions.size === 0} style={{ ...btnP, opacity: apiSelectedSessions.size === 0 ? 0.5 : 1 }}>
+                      Fetch {apiSelectedSessions.size} Race{apiSelectedSessions.size !== 1 ? "s" : ""}
+                    </button>
+                  </div>
+                )}
+
+                {apiLoading && <div style={{ fontSize: 12, color: C.elo, marginTop: 8 }}>{apiLoading}</div>}
+              </div>
+            )}
+
             {error && <div style={{ color: C.danger, fontSize: 12, marginTop: 8, whiteSpace: "pre-line" }}>{error}</div>}
           </div>
         ) : (

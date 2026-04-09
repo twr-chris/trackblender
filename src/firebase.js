@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, getDoc, getDocs, setDoc, collection, onSnapshot, query, deleteDoc, addDoc, orderBy } from 'firebase/firestore';
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut as fbSignOut, onAuthStateChanged } from 'firebase/auth';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 const firebaseConfig = {
   apiKey: "AIzaSyBVieauZ2HicKTq4TvzJ_RD2N9R0nQaxrM",
@@ -14,6 +15,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
+const functions = getFunctions(app, "us-central1");
 const provider = new GoogleAuthProvider();
 
 const LEAGUE = 'default'; // namespace for multi-tenant later
@@ -170,4 +172,22 @@ export function subscribeEloRatings(callback) {
   return onSnapshot(eloRatingsRef(), snap => {
     callback(snap.exists() ? snap.data() : null);
   });
+}
+
+// ─── iRacing API (via Cloud Function proxy) ───
+const iracingProxyFn = httpsCallable(functions, "iracingProxy");
+
+export async function fetchLeagueSeasons() {
+  const result = await iracingProxyFn({ action: "leagueSeasons" });
+  return result.data;
+}
+
+export async function fetchSeasonSessions(seasonId) {
+  const result = await iracingProxyFn({ action: "seasonSessions", seasonId });
+  return result.data;
+}
+
+export async function fetchRaceResult(subsessionId) {
+  const result = await iracingProxyFn({ action: "raceResult", subsessionId });
+  return result.data;
 }
