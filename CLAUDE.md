@@ -14,8 +14,8 @@ Licensed MIT. Other leagues are welcome to fork and deploy their own instances.
 - React 18 + Vite
 - Firebase Auth (Google sign-in) + Firestore (real-time sync)
 - GitHub Pages via GitHub Actions (static hosting, auto-deploys on push to main)
+- Firebase Cloud Functions (v2, Node 22) — single callable function proxying iRacing Data API requests
 - No CSS framework — inline styles with a custom dark theme (color constants in `src/lib/shared.js`)
-- No server component — entirely client-side; Firebase handles auth and persistence
 
 ## Project Structure
 
@@ -23,7 +23,7 @@ Licensed MIT. Other leagues are welcome to fork and deploy their own instances.
 src/
   App.jsx              — Shell, auth flow, data loading, tab routing
   main.jsx             — React entry point
-  firebase.js          — Firebase config, auth, Firestore CRUD + real-time subscriptions
+  firebase.js          — Firebase config, auth, Firestore CRUD, real-time subscriptions, iRacing API callables
   tracks.js            — Default iRacing track database (148 tracks, multi-category, free flags)
   lib/
     shared.js          — Color constants, category definitions, shared style objects
@@ -39,10 +39,15 @@ src/
     BuyRecs.jsx        — Purchase optimizer UI + best-value recommendations
     LeagueOverview.jsx — League overview: league-wide stats, ELO leaderboard, recent races
     Stats.jsx          — Ownership overview / stats dashboard (admin-only)
-    Elo.jsx            — ELO tab: standings, race results, my stats, settings
+    Elo.jsx            — ELO tab: standings, race results, my stats, settings, iRacing API import
     Editor.jsx         — Track editor (admin-only)
-    LeagueAdmin.jsx    — Admin panel (member management, permissions, driver aliases)
+    LeagueAdmin.jsx    — Admin panel (member management, permissions, driver aliases, iRacing league ID)
     ImportModal.jsx    — iRacing track paste importer
+functions/
+  index.js             — Firebase callable: iracingProxy (leagueSeasons, seasonSessions, raceResult)
+  lib/
+    iracing-auth.js    — iRacing OAuth2 password_limited flow, token caching in Firestore
+    iracing-api.js     — iRacing Data API request helper (envelope + S3 link resolution)
 ```
 
 The codebase was originally a single-file monolith (App.jsx at ~1,340 lines). It was refactored into modules with single responsibilities. No logic changed during the split — it was a pure structural refactor.
@@ -52,7 +57,7 @@ The codebase was originally a single-file monolith (App.jsx at ~1,340 lines). It
 ```
 leagues/{leagueId}/
   data/
-    config      — { name, adminUids[], logoUrl?: string (base64 data URL), createdAt }
+    config      — { name, adminUids[], logoUrl?: string (base64 data URL), iracingLeagueId?: number, createdAt }
     tracks      — { list: [...track objects] }
     schedule    — { rounds: [...track names] }
     eloRatings  — { ratings: {driverKey: {elo, racesPlayed}}, kFactor, lastCalculatedAt }
@@ -63,6 +68,8 @@ leagues/{leagueId}/
 ```
 
 `leagueId` is currently `"default"`. The namespace exists to support multi-tenancy later without a data migration.
+
+A separate top-level document `_system/iracingTokens` caches iRacing OAuth tokens (access + refresh) for the Cloud Function. This is outside the league namespace because it's infrastructure, not league data.
 
 ### Key data conventions
 
@@ -126,9 +133,19 @@ The import preview allows per-driver reassignment before committing, handling ed
 
 Race dates are stored as full ISO timestamps from iRacing (UTC) and converted to local time for display. Manually entered races store `YYYY-MM-DD` strings; the display logic handles both formats.
 
-### No backend server
+### iRacing Data API integration
 
-Everything runs client-side. Firebase handles auth, persistence, and real-time sync. This keeps hosting trivially simple (GitHub Pages) and eliminates server costs. The tradeoff is that any future feature requiring server-side logic (scraping, scheduled jobs, API proxying) would need a new layer — likely Firebase Cloud Functions.
+TrackBlender connects to iRacing's Data API via a Firebase Cloud Function (`iracingProxy`). The function uses the OAuth2 "password_limited" flow — a custom grant type for headless clients that iRacing allocates on request. Credentials (client ID, client secret, username, password) are stored in Google Secret Manager and injected at runtime.
+
+The function exposes three actions via a single callable: `leagueSeasons` (list all seasons for the configured league), `seasonSessions` (list race sessions for a season), and `raceResult` (full results for a subsession). The iRacing Data API returns JSON envelopes with a `link` field pointing to time-limited S3 URLs; the function follows these links and returns the data inline.
+
+Token management: access tokens last 600 seconds, refresh tokens 7 days (single-use). Tokens are cached in a Firestore document (`_system/iracingTokens`) to survive cold starts. A Firestore transaction prevents two concurrent instances from both consuming the single-use refresh token.
+
+The API response shape is identical to iRacing's event result JSON export, so the existing `parseIracingResult()` parser works unchanged — the import modal simply offers "From Files" and "From iRacing API" as two paths into the same preview/resolve/commit pipeline.
+
+The iRacing league ID is stored in the league config (`iracingLeagueId`) and set by an admin in League Admin. The function reads it at call time rather than hardcoding it.
+
+Design philosophy: iRacing is one input source, not the source of truth. TrackBlender is the league — it owns identity (virtual members, aliases), ELO (cross-season, cross-class), and schedule. The API replaces manual data-gathering but doesn't replace the meta-layer. Race records carry a source tag for provenance.
 
 ## iRacing Track Data
 
@@ -163,6 +180,21 @@ Opens at http://localhost:5173/trackblender/. Local dev connects to the producti
 
 ### Deploying
 Push to `main`. GitHub Actions builds and deploys to GitHub Pages automatically.
+
+Cloud Functions are deployed separately:
+```bash
+cd functions && npm install && cd ..
+firebase deploy --only functions
+```
+
+### iRacing API setup (for forks)
+1. Contact iRacing to request a "password_limited" OAuth client for their Data API.
+2. Upgrade your Firebase project to the Blaze (pay-as-you-go) plan.
+3. Set secrets: `firebase functions:secrets:set IRACING_CLIENT_ID`, `IRACING_CLIENT_SECRET`, `IRACING_USERNAME`, `IRACING_PASSWORD`.
+4. Grant the Cloud Functions compute service account (`{project-number}-compute@developer.gserviceaccount.com`) the **Cloud Datastore User** and **Cloud Firestore Service Agent** roles in IAM. Also grant **Cloud Build Service Account** if first deploy fails.
+5. Deploy: `firebase deploy --only functions`.
+6. In Cloud Run console, set the `iracingproxy` service authentication to "Allow public access" (the callable SDK handles user auth).
+7. In the app, go to League Admin and set your iRacing League ID.
 
 ### Conventions
 - Inline styles throughout, using the `C` color constants from `shared.js`. No CSS files.
