@@ -688,7 +688,7 @@ function ImportRaceModal({ members, addRace, onClose, races: existingRaces }) {
       const data = await fetchLeagueSeasons();
       setApiSeasons((data.seasons || []).sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0) || b.season_id - a.season_id));
     } catch (err) {
-      setError(err.message || "Failed to load seasons");
+      setError(err.code ? `${err.code}: ${err.message}` : err.message || "Failed to load seasons");
     }
     setApiLoading("");
   };
